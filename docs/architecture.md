@@ -1,4 +1,4 @@
-# OmniRescue AI — Architecture Diagram
+# OffGrid AI — Architecture Diagram
 
 Render with any Mermaid-compatible viewer (GitHub, GitLab, Obsidian, mermaid.live).
 
@@ -100,7 +100,7 @@ graph TB
 ## Component Descriptions
 
 ### Customer Surfaces
-- **JS Embed Snippet** (`embed/omnirerescue.js`): A single `<script>` tag that injects the OmniRescue widget into any web storefront. No framework dependency. Sends events to the Cloud Run REST API.
+- **JS Embed Snippet** (`embed/omnirerescue.js`): A single `<script>` tag that injects the OffGrid widget into any web storefront. No framework dependency. Sends events to the Cloud Run REST API.
 - **Mobile (Firebase SDK)**: iOS/Android apps integrate via Firebase for real-time session sync and push notifications.
 - **Messaging (stretch)**: WhatsApp/Telegram bots forward messages as webhook POST requests to the same REST API — no agent code changes required.
 

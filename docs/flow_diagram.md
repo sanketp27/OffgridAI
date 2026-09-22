@@ -1,4 +1,4 @@
-# OmniRescue AI — Flow Diagrams
+# OffGrid AI — Flow Diagrams
 
 Render with any Mermaid-compatible viewer (GitHub, GitLab, Obsidian, mermaid.live).
 

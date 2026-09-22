@@ -1,4 +1,4 @@
-# OmniRescue AI — Solution Plan
+# OffGrid AI — Solution Plan
 
 ### Retail & Commerce: Intelligent Customer and Business Experiences
 
@@ -20,11 +20,11 @@ Retailers face three interconnected crises rooted in one missing capability — 
 
 | Inventory distortion (overstock + stockouts) | $1.7T (global) | No demand signal from failed journeys |
 
-Current AI retail tools are **unidirectional**: they assist the shopper, then discard what happened. OmniRescue makes every failure a **closed loop**.
+Current AI retail tools are **unidirectional**: they assist the shopper, then discard what happened. OffGrid makes every failure a **closed loop**.
 
 ---
 
-## 2. Solution: OmniRescue AI
+## 2. Solution: OffGrid AI
 
 > An embeddable AI intelligence layer that any commerce platform can plug into — detects when a shopping journey is about to fail, rescues it in real time, and turns every failure into a merchant action signal.
 
@@ -60,7 +60,7 @@ Purchase            Insight Agent surfaces action
 
 ```
 
-Unlike every AI shopping chatbot, OmniRescue **closes the loop** — failed customer intent becomes structured merchant intelligence, not discarded logs.
+Unlike every AI shopping chatbot, OffGrid **closes the loop** — failed customer intent becomes structured merchant intelligence, not discarded logs.
 
 ---
 
@@ -152,7 +152,7 @@ Hit **"Generate Insights"** → Insight Agent processes the session log and outp
 
 ## 5. Platform-Agnostic Design
 
-OmniRescue is not a Shopify app or a WooCommerce plugin. It is the **intelligence layer between the customer and any commerce system**.
+OffGrid is not a Shopify app or a WooCommerce plugin. It is the **intelligence layer between the customer and any commerce system**.
 
 | Surface | Integration method |
 
@@ -216,7 +216,7 @@ No proprietary retailer data required — demo is fully reproducible.
 
 ## 8. Judging Criteria Alignment
 
-| Criterion | Weight | How OmniRescue scores |
+| Criterion | Weight | How OffGrid scores |
 
 |---|---|---|
 
@@ -252,7 +252,7 @@ No proprietary retailer data required — demo is fully reproducible.
 
 ## 10. Differentiation Summary
 
-| What others build | What OmniRescue builds |
+| What others build | What OffGrid builds |
 
 |---|---|
 
