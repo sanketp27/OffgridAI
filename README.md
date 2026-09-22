@@ -1,133 +1,194 @@
+<div align="center">
+
 # OffgridAI
 
-OffgridAI is an AI-powered commerce intelligence platform designed to detect when a shopping journey is about to fail, recover it in real time, and convert failed customer intent into actionable merchant insights.
+### Turn every failed shopping journey into revenue.
 
-The project is built around a closed-loop customer experience: understand intent, improve discovery, rescue failed searches or stockouts, guide product fit, analyze returns, and generate business intelligence for merchants.
+**The closed-loop AI intelligence layer for modern commerce.**
 
-## Why this project exists
+[![Built with Gemini](https://img.shields.io/badge/Built%20with-Gemini-4285F4?logo=google)](https://ai.google.dev/)
+[![Powered by Google Cloud](https://img.shields.io/badge/Powered%20by-Google%20Cloud-4285F4?logo=googlecloud)](https://cloud.google.com/)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
 
-Retail and commerce experiences often fail in three costly ways:
+[Explore the solution](docs/solution.md) · [View the architecture](docs/architecture.md) · [Review the roadmap](docs/implementation_plan.md)
 
-- search and discovery fail because shoppers cannot find the right product
-- customers buy the wrong item and return it later
-- stockouts and weak recommendations create lost revenue and poor demand visibility
+</div>
 
-OffgridAI turns these failures into structured, useful signals instead of discarded interactions.
+---
 
-## Core concept
+## The commerce problem
 
-OffgridAI is a platform-agnostic intelligence layer that sits between the customer and a commerce system. It can be used across:
+Every day, shoppers leave because they cannot find what they want, discover their preferred product is unavailable, or purchase the wrong fit. Most commerce systems record these moments as disconnected events—and then forget them.
 
-- storefront web experiences
-- mobile apps
-- messaging channels
-- store associate workflows
-- merchant dashboards
+The result is a costly cycle of:
 
-The system captures shopper intent, performs semantic product discovery, validates fit, handles stockout rescue flows, and then synthesizes business-level insight from the resulting event data.
+- **Failed discovery:** shoppers cannot translate intent into the right product.
+- **Lost sales:** stockouts become dead ends instead of substitution opportunities.
+- **Avoidable returns:** customers lack the guidance needed to buy confidently.
+- **Invisible demand:** unmet customer intent never reaches the merchant.
 
-## Key capabilities
+> **The insight is already there. It is trapped inside the failure.**
 
-- semantic product discovery and rescue flows
-- fit-check guidance for return-prone items
-- stockout substitution recommendations
-- return intelligence and disposition analysis
-- merchant insight generation from high-signal session data
-- event-driven architecture for analytics and operational learning
+## Our solution
 
-## Architecture overview
+OffgridAI detects when a shopping journey is about to fail, rescues it in real time, and converts the outcome into an actionable business signal.
 
-The solution is designed around Google AI and Google Cloud services, with a layered architecture consisting of:
+It is a **platform-agnostic AI intelligence layer** that can sit between any customer experience and commerce backend—without requiring a retailer to replace its existing storefront, catalog, or operations stack.
 
-- customer-facing surfaces
-- a REST API layer
-- an orchestrator and specialized AI agents
-- data and vector search services
-- analytics and insight generation
+```text
+Customer intent
+      ↓
+Semantic discovery
+      ↓
+Failure detected? ── Yes ──► AI rescue
+      │                              ↓
+      No                       Outcome logged
+      ↓                              ↓
+Purchase                 Merchant insight generated
+                                      ↓
+                              Business action taken
+```
 
-A high-level architecture diagram is available in `docs/architecture.md`, and the detailed business and technical plan is documented in `docs/solution.md`.
+This is the **Rescue Loop**: intent becomes action, failure becomes intelligence, and every interaction makes the next customer journey better.
 
-## Repository structure
+## What OffgridAI does
+
+### 1. Understand intent
+
+Interpret text, images, voice, slang, synonyms, budget, attributes, use case, and urgency to create a structured shopper profile.
+
+### 2. Discover without dead ends
+
+Use semantic search to find relevant products—even when the exact query does not match the catalog. When the preferred item is unavailable, surface grounded alternatives with clear trade-offs.
+
+### 3. Improve purchase confidence
+
+For return-prone products, ask one targeted, SKU-specific fit question at the moment it matters.
+
+### 4. Rescue stockouts
+
+Combine substitutes, nearby inventory, and fulfillment timing to save revenue that would otherwise be lost.
+
+### 5. Turn returns into value
+
+Analyze a returned-item photo and order context to recommend whether the item should be restocked, refurbished, relisted, or liquidated.
+
+### 6. Give merchants the signal
+
+Cluster customer events, quantify revenue at risk, and produce plain-language briefs that merchants can act on.
+
+## Three experiences, one intelligence layer
+
+| Experience | What happens | Business outcome |
+| --- | --- | --- |
+| **Smart Discovery** | A vague query or product image becomes grounded, relevant recommendations. | More confident discovery and fewer zero-result journeys. |
+| **Stockout Rescue** | An unavailable SKU becomes a transparent substitute, nearby-store option, or fulfillment alternative. | Revenue recovered instead of abandoned. |
+| **Return-to-Value** | A return photo and order history become a disposition recommendation. | More recovered inventory value and better operations. |
+
+## Built for the entire commerce team
+
+- **Shoppers** get helpful answers instead of dead ends.
+- **Store associates** get fast, practical return and inventory guidance.
+- **Merchants** get demand intelligence from real customer behavior.
+- **Commerce platforms** get an embeddable intelligence layer instead of another isolated application.
+
+## Why OffgridAI is different
+
+| Traditional commerce AI | OffgridAI |
+| --- | --- |
+| Search → recommend → buy | Intent → discover → rescue → fulfill → learn |
+| Focuses on one customer interaction | Connects shopper, associate, and merchant workflows |
+| Failed sessions disappear into logs | Failed intent becomes structured demand intelligence |
+| Requires a single commerce platform | Integrates with any storefront, backend, or mobile experience |
+| Gives generic recommendations | Gives catalog-grounded, explainable recommendations |
+
+## Designed for trustworthy AI
+
+OffgridAI is designed with grounding and measurable outputs at its core:
+
+- Discovery and Fit-Check agents may describe only products retrieved from the catalog and identified by SKU.
+- Insight agents may report only metrics computed from application data.
+- Specialized agents are routed through an orchestrator rather than calling one another directly.
+- Every rescue, fit-check, purchase, and return outcome is logged using a shared event schema.
+
+## Platform-agnostic by design
+
+Integrate OffgridAI wherever customers and commerce teams already work:
+
+| Surface | Integration |
+| --- | --- |
+| Web storefront | Lightweight JavaScript embed |
+| Backend | Language-agnostic REST API |
+| Mobile app | Firebase SDK and real-time session sync |
+| Store associate | Browser-based progressive web app |
+| Messaging | Webhooks to the same REST API |
+
+**One API. One event schema. Any commerce platform.**
+
+## Technology
+
+OffgridAI is designed on Google AI and Google Cloud:
+
+- **Gemini via Vertex AI** — multimodal intent, fit-check, return analysis, and insight synthesis
+- **Google Agent Development Kit** — orchestration and specialist agent routing
+- **FastAPI on Cloud Run** — stateless, horizontally scalable API layer
+- **Firestore** — sessions, catalog, events, and insights
+- **Gemini Embeddings** — semantic catalog and query retrieval
+- **BigQuery** — append-only event analytics and BI integration
+- **Cloud Storage** — product, shelf, and return images
+- **Firebase Hosting and Auth** — business surfaces and role-based access
+
+See the complete [architecture diagram](docs/architecture.md) for system components and data flows.
+
+## Repository
 
 ```text
 OffgridAI/
-├── LICENSE
-├── README.md
-├── backend/
-│   └── main.py
+├── backend/                 # Backend application scaffold
+├── frontend/                # Frontend application scaffold
 ├── docs/
-│   ├── architecture.md
+│   ├── solution.md          # Product vision and solution plan
+│   ├── architecture.md     # System architecture and data flows
+│   ├── implementation_plan.md
 │   ├── backend_implementation_plan.md
 │   ├── feasible_plan_v2.md
 │   ├── flow_diagram.md
-│   ├── implementation_plan.md
-│   ├── offgrid_tickets.xlsx
-│   ├── solution.md
 │   └── ticket_specs.md
-├── frontend/
-│   └── init.txt
-└── .gitignore (if present in repository)
+├── LICENSE
+└── README.md
 ```
 
-## Documentation
+## Get involved
 
-This repository includes detailed planning and design documents:
-
-- `docs/solution.md` — product and solution overview
-- `docs/architecture.md` — system architecture and data flows
-- `docs/implementation_plan.md` — implementation roadmap
-- `docs/backend_implementation_plan.md` — backend execution plan
-- `docs/ticket_specs.md` — feature and ticket breakdown
-- `docs/flow_diagram.md` — flow visualization
-
-## Tech stack
-
-The project plan describes a stack built around:
-
-- Google Gemini / Vertex AI for multimodal reasoning and embeddings
-- Google Agent Development Kit for orchestration
-- FastAPI for backend APIs
-- Firebase for app and real-time data needs
-- Firestore for sessions, events, and catalog state
-- BigQuery for analytics and BI integration
-- Cloud Storage for images and product data
-
-## Project status
-
-This repository currently contains:
-
-- project documentation and planning materials
-- the initial backend scaffold
-- initial frontend scaffolding
-
-The implementation is in an early stage, with architecture and product direction already defined in the docs.
-
-## Getting started
-
-Clone the repository:
+The project is currently in the early implementation stage, with the product concept, architecture, implementation roadmap, and feature specifications documented in this repository.
 
 ```bash
 git clone https://github.com/sanketp27/OffgridAI.git
 cd OffgridAI
 ```
 
-Then review the planning docs before building the application:
+Start here:
 
-```bash
-ls
-find docs -maxdepth 1 -type f | sort
-```
+1. Read the [solution plan](docs/solution.md) to understand the product and demo flows.
+2. Review the [architecture](docs/architecture.md) to understand the system design.
+3. Follow the [implementation plan](docs/implementation_plan.md) for the build roadmap.
 
-For the implementation roadmap and required system behavior, start with:
+## The vision
 
-- `docs/solution.md`
-- `docs/architecture.md`
-- `docs/implementation_plan.md`
+Commerce should not treat a failed search, a stockout, or a return as the end of the story.
+
+**OffgridAI turns those moments into the beginning of a better one.**
+
+---
+
+<div align="center">
+
+**Intent in. Intelligence out.**
+
+Built for the next generation of commerce experiences.
+
+</div>
 
 ## License
 
-This project is licensed under the Apache License 2.0. See the `LICENSE` file for details.
-
-## Summary
-
-OffgridAI is a retail intelligence platform that closes the loop between failed customer journeys and merchant action. Instead of treating searches, stockouts, and returns as dead ends, the platform captures them as learning signals that improve product discovery, customer experience, and business decisions.
+OffgridAI is licensed under the [Apache License 2.0](LICENSE).
