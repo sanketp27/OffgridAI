@@ -291,7 +291,10 @@ class Event(BaseModel):
 
 class EventType(str, Enum):
     SEARCH = "search"
+    SEARCH_REFINED = "search_refined"       # OG-048: iterative refinement turn
+    VOICE_SEARCH = "voice_search"           # OG-049: voice/multilingual input
     FIT_CHECK = "fit_check"
+    FOLLOW_UP_SENT = "follow_up_sent"       # OG-050: post-purchase fit follow-up triggered
     SUBSTITUTE_ACCEPTED = "substitute_accepted"
     RESCUE_DECLINED = "rescue_declined"
     STOCKOUT_LOST = "stockout_lost"
@@ -304,7 +307,10 @@ class EventType(str, Enum):
 | `type` | `resolution` valid values |
 |---|---|
 | `search` | `"exact_match"` \| `"near_match"` \| `"no_match"` |
+| `search_refined` | `"narrowed"` \| `"new_search"` (refinement reclassified as new query) |
+| `voice_search` | `"exact_match"` \| `"near_match"` \| `"no_match"` (same as `search`) |
 | `fit_check` | `"confirmed"` \| `"size_changed"` \| `"variant_changed"` \| `"abandoned"` |
+| `follow_up_sent` | `"sent"` |
 | `substitute_accepted` | `"accepted"` |
 | `rescue_declined` | `"declined"` |
 | `stockout_lost` | `"abandoned"` |
@@ -371,6 +377,66 @@ class ReturnAssessment(BaseModel):
 
 ---
 
+---
+
+#### `follow_up_notifications` Collection
+
+Written by the Fit-Check Agent at purchase time (OG-050). One document per flagged purchase. Never updated — append-only.
+
+```python
+class FollowUpNotification(BaseModel):
+    notification_id: str          # Firestore document ID
+    session_id: str               # FK → sessions
+    user_id: str | None           # Firebase UID; null for anonymous
+    store_id: str
+    sku_id: str                   # Purchased SKU that triggered fit-check
+    fit_check_resolution: str     # "confirmed" | "size_changed" — must be one of these; never "abandoned"
+    follow_up_message: str        # Gemini Flash prose, grounded on resolution + SKU attributes
+    created_at: datetime
+    delivered: bool               # True once frontend has fetched it
+```
+
+**Trigger rule (Python):** Generated only when a session ends with a `fit_check` event whose resolution is `confirmed` or `size_changed`. Never generated for `abandoned`.
+
+**Content differentiation (per OG-050 AC):**
+- `size_changed` → message references the specific size swap + a sizing tip grounded in the SKU's fit pattern
+- `confirmed` → message includes an easy-return reminder + confidence reinforcement grounded in SKU attributes
+
+---
+
+#### `merchant_chat_sessions` Collection
+
+Stores conversation history for the Ask-Your-Data chat feature (OG-051). One document per chat session.
+
+```python
+class MerchantChatSession(BaseModel):
+    chat_session_id: str          # Firestore document ID (UUID v4)
+    store_id: str                 # Scoped to merchant
+    merchant_uid: str             # Firebase UID
+    created_at: datetime
+    last_active_at: datetime
+    turns: list[ChatTurn]         # Ordered list of all turns
+
+class ChatTurn(BaseModel):
+    role: str                     # "user" | "assistant"
+    message: str
+    function_calls: list[FunctionCallLog]  # Which query functions were called
+    sources: list[ChatSource]     # Data cited in this turn
+    created_at: datetime
+
+class FunctionCallLog(BaseModel):
+    function_name: str            # e.g. "get_events_by_filter"
+    arguments: dict               # Arguments passed
+    result_summary: str           # Human-readable summary of what was returned
+
+class ChatSource(BaseModel):
+    source_type: str              # "event_aggregate" | "insight" | "sku"
+    label: str                    # e.g. "fit_check events, footwear, last 7d"
+    value: str | float            # The actual data cited
+```
+
+---
+
 ### 6.2 BigQuery Dataset: `offgrid_events`
 
 Mirror of Firestore `events` for SQL analytics. Eventarc writes to this automatically.
@@ -427,6 +493,8 @@ offgrid-ai-assets/
 
 ### 7.1 Endpoint Inventory
 
+**Core endpoints (Phases 0–4):**
+
 | Method | Path | Role Required | Agent(s) Invoked | Description |
 |---|---|---|---|---|
 | GET | `/health` | None | None | Liveness check |
@@ -440,6 +508,15 @@ offgrid-ai-assets/
 | GET | `/session/{session_id}` | `shopper` | None | Fetch session state |
 | POST | `/catalog/embed` | `admin` | Embedding job | Re-embed full catalog |
 | GET | `/catalog/{sku_id}` | `shopper` | None | Get single SKU |
+
+**Phase 5A endpoints (feature extensions):**
+
+| Method | Path | Role Required | Agent(s) Invoked | Phase 5A Feature |
+|---|---|---|---|---|
+| POST | `/search/refine` | `shopper` | Discovery (refinement mode) | OG-048: Iterative refinement |
+| POST | `/search/voice` | `shopper` | Intent + Discovery | OG-049: Multilingual & voice-first search |
+| GET | `/follow-up/{session_id}` | `shopper` | None (reads Firestore) | OG-050: Post-purchase fit follow-up |
+| POST | `/insights/chat` | `merchant` | Insight (chat mode) | OG-051: Ask-your-data merchant chat |
 
 ---
 
@@ -570,6 +647,356 @@ store_id: "store_001"
 
 ---
 
+### 7.3 Phase 5A Endpoint Schemas
+
+#### `POST /search/refine` — Iterative Refinement (OG-048)
+
+Narrows the current result set by a modifier utterance. Does **not** restart the search — it mutates the existing `StructuredIntent` on the session and re-runs retrieval with the updated filters.
+
+**Request:**
+```json
+{
+  "session_id": "existing-uuid",
+  "refinement_text": "show me something cheaper",
+  "prior_result_sku_ids": ["SKU-042", "SKU-107", "SKU-203"]
+}
+```
+
+**How the backend classifies the utterance (Python — no LLM call):**
+```python
+REFINEMENT_SIGNALS = {
+    "price_down":   ["cheaper", "lower price", "budget", "affordable", "under"],
+    "price_up":     ["higher quality", "premium", "splurge", "more expensive"],
+    "style_change": ["bolder", "more minimal", "modern", "classic", "colourful"],
+    "new_search":   []  # default if no signal matches — reclassify as fresh /search
+}
+```
+
+If classified as `new_search`, the backend transparently routes to the existing `/search` path and returns `is_new_search: true` in the response so the frontend can update its UI state.
+
+**Response 200:**
+```json
+{
+  "session_id": "existing-uuid",
+  "refinement_applied": "price_down",
+  "updated_intent": {
+    "category": "home_goods",
+    "attributes": {"style": "cozy"},
+    "budget": 2500,
+    "use_case": null,
+    "urgency": null
+  },
+  "results": [
+    {
+      "sku_id": "SKU-089",
+      "name": "Jute Storage Basket",
+      "price": 1800,
+      "currency": "INR",
+      "image_url": "https://storage.googleapis.com/.../SKU-089.jpg",
+      "match_score": 0.83,
+      "match_explanation": "Within your revised ₹2,500 budget and similar natural-material style.",
+      "match_quality": "exact"
+    }
+  ],
+  "is_new_search": false,
+  "fit_check": { "triggered": false },
+  "event_id": "evt-uuid-refined"
+}
+```
+
+**Event logged:** `type: "search_refined"`, `resolution: "narrowed"`, carries `prior_result_sku_ids` as a field for continuity tracking.
+
+---
+
+#### `POST /search/voice` — Multilingual & Voice-First Search (OG-049)
+
+Accepts raw audio. Transcription and language detection happen inside a single Gemini Flash call — no separate translation pipeline. Results and explanations are returned in the shopper's detected language.
+
+**Request (multipart/form-data):**
+```
+audio: <binary>                # WAV / WebM / OGG — browser MediaRecorder output
+session_id: "uuid-or-null"
+store_id: "store_001"
+platform: "web_widget"
+language_hint: "hi"            # BCP-47 code; optional — Gemini detects if omitted
+```
+
+**Processing (single Gemini Flash multimodal call):**
+```
+Input: audio bytes + system prompt instructing:
+  1. Transcribe in the original language
+  2. Extract StructuredIntent in the same format as /search
+  3. Detect language code
+  4. Do NOT translate to English — preserve original language throughout
+Output: {transcription, detected_language, structured_intent}
+```
+
+Then: identical vector search + match-quality routing + grounded explanation path as `/search`. Explanation is generated in `detected_language`.
+
+**Response 200:**
+```json
+{
+  "session_id": "generated-or-existing-uuid",
+  "transcription": "पाँच हज़ार रुपये से कम में आरामदायक जूते दिखाओ",
+  "detected_language": "hi",
+  "results": [
+    {
+      "sku_id": "SKU-055",
+      "name": "Canvas Slip-On Shoes",
+      "price": 3999,
+      "currency": "INR",
+      "image_url": "https://storage.googleapis.com/.../SKU-055.jpg",
+      "match_score": 0.88,
+      "match_explanation": "ये कैनवास स्लिप-ऑन जूते आरामदायक हैं और आपके ₹5,000 के बजट में आते हैं।",
+      "match_quality": "exact"
+    }
+  ],
+  "fit_check": { "triggered": false },
+  "event_id": "evt-uuid-voice"
+}
+```
+
+**Event logged:** `type: "voice_search"`, carries `detected_language` as an extra field.
+
+**Edge case — mixed-language query:** Gemini handles code-switching natively. No special backend logic required; tested explicitly in OG-049 acceptance criteria.
+
+---
+
+#### `GET /follow-up/{session_id}` — Post-Purchase Fit Follow-Up (OG-050)
+
+Returns the pending follow-up notification for a session where a fit-check-flagged purchase occurred. Called by the Next.js frontend at purchase confirmation time. If no follow-up exists (fit-check never triggered, or resolution was `abandoned`), returns `triggered: false` — not an error.
+
+**Request:** No body. `session_id` in path. Bearer token must match session's `user_id` or be `admin`.
+
+**Response 200 — follow-up exists:**
+```json
+{
+  "triggered": true,
+  "notification_id": "ntf-uuid",
+  "sku_id": "SKU-042",
+  "sku_name": "Running Shoes - Size 9",
+  "fit_check_resolution": "size_changed",
+  "follow_up_message": "You sized up to 9.5 — a great call for this model, which runs narrow. If the fit still feels off after the first wear, our return window is open for 30 days. No rush.",
+  "created_at": "2026-09-23T14:22:00Z"
+}
+```
+
+**Response 200 — no follow-up:**
+```json
+{
+  "triggered": false
+}
+```
+
+**When the follow-up is generated:** The Fit-Check Agent writes the `follow_up_notifications` document immediately after a `confirmed` or `size_changed` fit-check event is logged — not at the time this GET is called. This endpoint only reads; it never triggers generation. Marks `delivered: true` on the document after returning, so repeated fetches are idempotent.
+
+**Message content rules (enforced in Fit-Check Agent prompt):**
+- `size_changed` → references the specific variant change + a sizing tip grounded in the SKU's `attributes` object
+- `confirmed` → easy-return reminder + confidence signal grounded in SKU return_rate and attributes
+- No invented claims; no generic copy that applies to every product
+
+---
+
+#### `POST /insights/chat` — Ask-Your-Data Merchant Chat (OG-051)
+
+Free-form Q&A for merchants. Gemini Pro uses function-calling over a fixed set of query functions — it cannot issue arbitrary Firestore queries. Every number in the answer is returned by a function call; the LLM narrates and interprets, never computes.
+
+**Request:**
+```json
+{
+  "store_id": "store_001",
+  "chat_session_id": "existing-chat-uuid-or-null",
+  "message": "Why did fit-check flips spike last week for running shoes?"
+}
+```
+
+**Available query functions (Gemini function-calling schema):**
+```python
+CHAT_TOOLS = [
+    {
+        "name": "get_events_by_filter",
+        "description": "Query logged events by type, category, date range.",
+        "parameters": {
+            "event_type": {"type": "string"},           # EventType enum value
+            "category": {"type": "string", "nullable": True},
+            "resolution": {"type": "string", "nullable": True},
+            "date_range_days": {"type": "integer", "default": 7}
+        }
+    },
+    {
+        "name": "get_fit_check_flip_rate",
+        "description": "Return flip rate (size_changed / total fit_checks) per SKU for a category.",
+        "parameters": {
+            "category": {"type": "string"},
+            "date_range_days": {"type": "integer", "default": 7}
+        }
+    },
+    {
+        "name": "get_signal_by_type",
+        "description": "Fetch stored Insight documents filtered by signal_type.",
+        "parameters": {
+            "signal_type": {"type": "string"},          # SignalType enum value
+            "top_n": {"type": "integer", "default": 5}
+        }
+    },
+    {
+        "name": "get_top_signals",
+        "description": "Return top N insights ranked by est_revenue_at_risk.",
+        "parameters": {
+            "top_n": {"type": "integer", "default": 5}
+        }
+    },
+    {
+        "name": "get_sku_details",
+        "description": "Fetch a specific SKU's attributes, return_rate, and stock.",
+        "parameters": {
+            "sku_id": {"type": "string"}
+        }
+    }
+]
+```
+
+**System prompt (excerpt):**
+```
+You are OffGrid's Merchant Intelligence assistant. Answer the merchant's question using ONLY data returned by the available functions.
+RULES:
+1. Call a function before stating any number. Never state a count, rate, or dollar figure you did not receive from a function result.
+2. If no function can answer the question, say "I don't have that data" — do not guess.
+3. Cite your sources: for every number, name the function and the key field it came from.
+4. Keep answers to 3 sentences maximum. Lead with the finding, not the method.
+```
+
+**Response 200:**
+```json
+{
+  "chat_session_id": "chat-uuid",
+  "answer": "Fit-check flips for running shoes hit 62% last week — up from 38% the prior week. The spike is concentrated on SKU-042 (size 9), where 11 of 14 shoppers who answered the fit-check question switched to 9.5. That pattern suggests the size-9 listing's size chart is showing incorrect sizing.",
+  "sources": [
+    {
+      "source_type": "event_aggregate",
+      "label": "fit_check events, footwear, last 7d",
+      "value": "62% flip rate"
+    },
+    {
+      "source_type": "sku",
+      "label": "SKU-042 fit_check breakdown",
+      "value": "11/14 size_changed"
+    }
+  ],
+  "unanswerable": false
+}
+```
+
+**Response 200 — unanswerable question:**
+```json
+{
+  "chat_session_id": "chat-uuid",
+  "answer": "I don't have data to forecast next month's sales — I can only report on what's already happened. Would you like to see current revenue-at-risk signals instead?",
+  "sources": [],
+  "unanswerable": true
+}
+```
+
+**Chat history:** Each turn is appended to the `merchant_chat_sessions` Firestore document. The full turn history is passed to Gemini on each request so the model has conversation context.
+
+---
+
+### 7.4 Phase 5A Pipeline Extensions to `POST /insights/generate`
+
+OG-052 and OG-053 are not new endpoints — they extend the existing `POST /insights/generate` pipeline. The response schema and endpoint path are unchanged; what changes is the classification logic and two fields that may now be populated.
+
+#### OG-052 — Pricing Gap Signal Type
+
+A fourth `signal_type` classification is added to the rule-based classifier (Python, not LLM):
+
+```python
+def classify_signal(cluster: Cluster, catalog: list[SKU]) -> SignalType:
+    sku_exists = any(s.sku_id for s in catalog if cluster.label in s.name.lower())
+
+    if not sku_exists:
+        return SignalType.STOCK_GAP
+
+    avg_match_score = mean(e.score for e in cluster.events if e.score)
+
+    if avg_match_score < VECTOR_MATCH_THRESHOLD_EXACT:
+        return SignalType.DISCOVERABILITY_GAP
+
+    # Item existed and matched well, but still didn't convert
+    # Check: did the shopper's stated budget fall below the matched SKU's price?
+    budgets = [e.intent.budget for e in cluster.events if e.intent and e.intent.budget]
+    matched_prices = [
+        next(s.price for s in catalog if s.sku_id == e.sku_id)
+        for e in cluster.events if e.sku_id
+    ]
+    if budgets and matched_prices:
+        median_budget = median(budgets)
+        median_price = median(matched_prices)
+        if median_price > median_budget * 1.20:          # item costs >20% above stated budget
+            return SignalType.PRICING_GAP
+
+    # Elevated fit-check flip rate → sizing confusion
+    flip_rate = sum(1 for e in cluster.events if e.resolution == "size_changed") / len(cluster.events)
+    if flip_rate > 0.35:
+        return SignalType.SIZING_CONFUSION
+
+    return SignalType.DISCOVERABILITY_GAP                # safe fallback
+```
+
+**Pricing gap insight response shape (example):**
+```json
+{
+  "signal_type": "pricing_gap",
+  "label": "yoga mats",
+  "occurrences": 9,
+  "unique_shoppers": 8,
+  "trend_pct": null,
+  "est_revenue_at_risk": 32.40,
+  "urgency_days": null,
+  "brief": "9 shoppers searched for yoga mats with an average budget of ₹800, but the closest match (SKU-077) is priced at ₹1,200 — 50% above their stated budgets. Consider a promotional price or sourcing a lower-cost alternative.",
+  "recommended_action": "Run a promotion on SKU-077 or source a yoga mat under ₹900"
+}
+```
+
+**`recommended_action` by signal type:**
+
+| `signal_type` | `recommended_action` content |
+|---|---|
+| `stock_gap` | "Source a [label] SKU" |
+| `discoverability_gap` | "Review search tags and synonyms for [label]" |
+| `sizing_confusion` | "Audit the size chart for [label]" |
+| `pricing_gap` | "Run a promotion on [top-matched SKU] or source a lower-priced alternative" |
+
+---
+
+#### OG-053 — Restock-by-Date Urgency
+
+`urgency_days` is populated only for `stock_gap` signals. Formula is computed in Python before the brief is generated; the LLM receives it as a pre-computed integer and narrates it verbatim.
+
+```python
+def compute_urgency_days(cluster: Cluster, prior_cluster: Cluster | None) -> int | None:
+    if cluster.signal_type != SignalType.STOCK_GAP:
+        return None
+
+    if prior_cluster is None or cluster.occurrences < MIN_EVENTS_FOR_URGENCY:
+        return None                    # Insufficient history — omit rather than guess
+
+    daily_rate = cluster.occurrences / TIME_WINDOW_DAYS    # e.g. 14 / 7 = 2.0/day
+    trend_multiplier = 1 + (cluster.trend_pct / 100) if cluster.trend_pct else 1.0
+
+    # Project forward: at current growth rate, how many days until this signal
+    # reaches the HIGH_URGENCY_THRESHOLD (occurrences = 3× current)?
+    days_to_threshold = HIGH_URGENCY_THRESHOLD / (daily_rate * trend_multiplier)
+    return max(1, round(days_to_threshold))
+```
+
+**In the brief:** The LLM prompt receives `urgency_days` and is instructed to include it as-is:
+```
+If urgency_days is present, include exactly: "at the current pace, consider restocking within about {urgency_days} days."
+If urgency_days is null, omit any urgency reference entirely.
+```
+
+---
+
 ## 8. Agent Architecture
 
 ### 8.1 Agent Mesh Overview
@@ -581,10 +1008,12 @@ FastAPI Layer
     │
     ▼
 Orchestrator Agent
-    ├── Intent + Discovery Agent   (Gemini Flash, function-calling)
-    ├── Fit-Check Agent            (Gemini Flash, function-calling)
-    ├── Return Intelligence Agent  (Gemini Flash, multimodal)
-    └── Insight Agent              (Gemini Pro, batch)
+    ├── Intent + Discovery Agent   (Gemini Flash, function-calling)  — /search, /search/voice
+    ├── Discovery Agent (Refinement mode)                            — /search/refine
+    ├── Fit-Check Agent            (Gemini Flash, function-calling)  — /fit-check, follow-up generation
+    ├── Return Intelligence Agent  (Gemini Flash, multimodal)        — /return
+    ├── Insight Agent              (Gemini Pro, batch)               — /insights/generate
+    └── Insight Agent (Chat mode)  (Gemini Pro, function-calling)    — /insights/chat
 ```
 
 ### 8.2 Agent Definitions
@@ -604,10 +1033,19 @@ Orchestrator Agent
 **Routing table:**
 ```python
 ROUTING = {
+    # Core (Phases 0–4)
     "search":              [IntentDiscoveryAgent],
     "fit_check_response":  [FitCheckAgent],
     "return":              [ReturnIntelligenceAgent],
     "insights_generate":   [InsightAgent],
+
+    # Phase 5A extensions
+    "search_refine":       [DiscoveryRefinementAgent],   # OG-048
+    "voice_search":        [IntentDiscoveryAgent],        # OG-049 — same agent; audio input flag set
+    "insights_chat":       [InsightChatAgent],            # OG-051
+    # OG-050 follow-up is written by FitCheckAgent inline after fit_check_response;
+    # GET /follow-up/{session_id} is a direct Firestore read — no agent invoked
+    # OG-052 / OG-053 are pipeline extensions inside InsightAgent — no routing change
 }
 ```
 
@@ -858,6 +1296,141 @@ cluster.brief = gemini_pro.generate(BRIEF_PROMPT)
 
 ---
 
+#### Discovery Agent — Refinement Mode (OG-048)
+
+**File:** `backend/agents/discovery_refinement.py`
+
+**Model:** `gemini-2.0-flash`
+
+This is not a separate agent class — it is the `IntentDiscoveryAgent` invoked with a `refinement=True` flag and the session's existing `StructuredIntent` passed in context. No new Gemini call is made to re-parse intent from scratch.
+
+**Execution flow:**
+```
+1. Load existing StructuredIntent from session (Firestore)
+2. Classify refinement utterance (Python pattern match — no LLM):
+   ├── price_down   → intent.budget = infer_new_budget(utterance, current_budget)
+   ├── price_up     → intent.budget = None (remove ceiling)
+   ├── style_change → intent.attributes["style"] = extracted_style(utterance)
+   └── new_search   → route to IntentDiscoveryAgent fresh (return is_new_search: true)
+3. Update StructuredIntent on the session document
+4. Re-run vector_search_catalog with updated intent (same OG-013 path)
+5. Apply match-quality threshold (same OG-014 path)
+6. Generate grounded explanations (same OG-015 path, prompt references prior results for contrast)
+7. Log search_refined event (resolution: "narrowed" | "new_search")
+8. Check FitCheck trigger on new top result
+9. Return SearchResponse with refinement_applied + updated_intent fields
+```
+
+**Anti-pattern explicitly prevented:** Refinement never re-calls Gemini for intent extraction when a Python pattern match is sufficient. This keeps p95 latency under 2s for refinement turns.
+
+---
+
+#### Intent + Discovery Agent — Voice/Multilingual Extension (OG-049)
+
+**File:** No new file — extension of `backend/agents/discovery.py`
+
+**Model:** `gemini-2.0-flash` (multimodal)
+
+The existing `IntentDiscoveryAgent.run()` accepts an optional `audio_bytes: bytes | None` parameter. When present, the first Gemini call is replaced with a multimodal call that transcribes, detects language, and extracts intent in a single round-trip.
+
+**Modified first step (when `audio_bytes` is provided):**
+```python
+VOICE_INTENT_PROMPT = """
+You will receive an audio clip of a shopper search query.
+1. Transcribe it exactly in the original language.
+2. Detect the BCP-47 language code.
+3. Extract structured intent as JSON: {category, attributes, budget, use_case, urgency}.
+4. Do NOT translate to English. The category must still be one of our defined categories.
+
+After this step, all result explanations must be generated in the same detected language.
+"""
+
+response = gemini_flash_multimodal.generate(
+    contents=[audio_part, VOICE_INTENT_PROMPT],
+    response_schema=VoiceIntentResponse  # {transcription, detected_language, intent}
+)
+```
+
+From step 2 onward (embedding → vector search → threshold routing → explanations), the flow is identical to a text search. The only change: `generate_explanation()` receives `language=detected_language` and is instructed to respond in that language.
+
+**Edge case handling:** If Gemini cannot reliably detect the language (confidence below threshold), the backend defaults to English and sets `detected_language: "und"` (undetermined) in the response — never crashes, never guesses and returns wrong-language output.
+
+---
+
+#### Fit-Check Agent — Follow-Up Extension (OG-050)
+
+**File:** Inline extension of `backend/agents/fit_check.py`
+
+**Trigger:** Called by `FitCheckAgent` immediately after logging a `fit_check` event whose resolution is `confirmed` or `size_changed`. Never called for `abandoned`.
+
+**Model:** `gemini-2.0-flash`
+
+```python
+FOLLOW_UP_PROMPTS = {
+    "size_changed": """
+Write one short follow-up message (2 sentences max) for a shopper who just swapped from
+{original_variant} to {new_variant} for SKU {sku_name}.
+Acknowledge the smart choice using only these attributes: {sku_attributes}.
+End with a brief easy-return reminder.
+Do NOT invent facts about fit, feel, or performance not in the attributes.
+""",
+    "confirmed": """
+Write one short follow-up message (2 sentences max) for a shopper who confirmed their
+original size choice on {sku_name} despite a fit-check prompt.
+Reference only these attributes: {sku_attributes}.
+Include the store's return window as a confidence safety net.
+Do NOT fabricate comfort claims or fit guarantees.
+"""
+}
+```
+
+The generated message is written to `follow_up_notifications` document (see §6.1) and the `delivered` flag starts as `False`. The Next.js frontend reads it via `GET /follow-up/{session_id}` at purchase confirmation time.
+
+---
+
+#### Insight Agent — Chat Mode (OG-051)
+
+**File:** `backend/agents/insight_chat.py`
+
+**Model:** `gemini-2.0-pro`
+
+This is a separate class from the batch `InsightAgent` — it is stateful across turns (loads `MerchantChatSession` from Firestore) and uses a different system prompt and tool set.
+
+**System prompt:** See §7.3 `POST /insights/chat` — the same prompt applies here.
+
+**Tool set:** `CHAT_TOOLS` defined in §7.3.
+
+**Execution flow:**
+```
+1. Load MerchantChatSession from Firestore (or create new if chat_session_id is None)
+2. Append user turn to session.turns
+3. Build Gemini request:
+   ├── system_prompt: MERCHANT_CHAT_SYSTEM_PROMPT
+   ├── tools: CHAT_TOOLS
+   └── conversation_history: all prior turns (role: user/assistant)
+4. Gemini Pro generates a response, optionally calling one or more tools
+5. For each function_call in response:
+   ├── Execute the Python query function against Firestore
+   ├── Return results to Gemini as function_response
+   └── Log to FunctionCallLog (name, arguments, result_summary)
+6. Gemini synthesizes final answer from function results
+7. Build ChatSource list from function results (cited values only)
+8. Append assistant turn to session.turns (with sources + function_calls)
+9. Save updated MerchantChatSession to Firestore
+10. Return InsightChatResponse
+```
+
+**Unanswerable detection (Python post-processing):**
+```python
+def is_unanswerable(answer: str) -> bool:
+    DECLINE_SIGNALS = ["I don't have", "cannot answer", "no data available", "outside my scope"]
+    return any(sig.lower() in answer.lower() for sig in DECLINE_SIGNALS)
+```
+
+Sets `unanswerable: true` in the response when detected — this field lets the Next.js frontend render a distinct "I can't answer that" state rather than a normal answer card.
+
+---
+
 ## 9. System Flows (Backend)
 
 ### 9.1 Search Request Flow
@@ -1028,25 +1601,29 @@ backend/
 ├── dependencies.py                # FastAPI deps: verify_token, require_role, get_db
 │
 ├── routers/
-│   ├── search.py                  # POST /search
-│   ├── fit_check.py               # POST /fit-check
+│   ├── search.py                  # POST /search, POST /search/refine, POST /search/voice
+│   ├── fit_check.py               # POST /fit-check, GET /follow-up/{session_id}
 │   ├── return_intel.py            # POST /return, POST /return/{id}/confirm
-│   ├── insights.py                # GET /insights, POST /insights/generate
+│   ├── insights.py                # GET /insights, POST /insights/generate, POST /insights/chat
 │   └── admin.py                   # POST /catalog/embed, etc.
 │
 ├── agents/
 │   ├── orchestrator.py
-│   ├── discovery.py               # Intent + Discovery agent
-│   ├── fit_check.py
-│   ├── return_intel.py
-│   └── insight.py
+│   ├── discovery.py               # Intent + Discovery agent (text, image, voice — OG-012–018, OG-049)
+│   ├── discovery_refinement.py    # Iterative refinement mode — OG-048
+│   ├── fit_check.py               # Fit-Check + follow-up generation — OG-019–022, OG-050
+│   ├── return_intel.py            # Return Intelligence — OG-037–039
+│   ├── insight.py                 # Batch insight pipeline — OG-023–028, OG-052, OG-053
+│   └── insight_chat.py            # Ask-your-data merchant chat — OG-051
 │
 ├── models/
 │   ├── session.py
 │   ├── sku.py
 │   ├── event.py
 │   ├── insight.py
-│   └── return_assessment.py
+│   ├── return_assessment.py
+│   ├── follow_up_notification.py  # OG-050
+│   └── merchant_chat_session.py   # OG-051
 │
 ├── services/
 │   ├── firestore.py               # Firestore client + typed CRUD helpers
