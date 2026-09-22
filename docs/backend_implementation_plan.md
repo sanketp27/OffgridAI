@@ -71,7 +71,7 @@ OffGrid AI is a platform-agnostic retail intelligence layer. The backend closes 
 | API Framework | FastAPI | 0.115.x — async-first, OpenAPI auto-docs |
 | ASGI Server | Uvicorn | Behind Google's Cloud Run managed ingress |
 | Agent Orchestration | Google Agent Development Kit (ADK) | Python SDK — `google-adk` |
-| LLM Provider | Vertex AI (Gemini) | Flash 2.0 for interactive agents; Pro 2.0 for batch Insight |
+| LLM Provider | Vertex AI (Gemini) | Flash 3.6 for interactive agents; Pro 3.6 for batch Insight |
 | Dependency Management | `uv` | Lockfile committed; reproducible builds |
 | Type Checking | `mypy` | Strict mode on all agent and model code |
 | Testing | `pytest` + `pytest-asyncio` | Unit + integration; no mocks on the Firestore path |
@@ -97,7 +97,12 @@ OffGrid AI is a platform-agnostic retail intelligence layer. The backend closes 
 | `tenacity` | Retry logic for Vertex AI rate-limit responses |
 | `numpy` | Cosine similarity scoring for vector search |
 | `structlog` | Structured JSON logging (Cloud Logging-compatible) |
-| `httpx` | Async HTTP client for inter-service calls if needed |
+| `httpx` | Async HTTP client — inter-service calls + URL crawling |
+| `beautifulsoup4` | HTML parsing for URL crawl (link extraction + text stripping) |
+| `urllib.robotparser` | robots.txt compliance during URL crawl (stdlib) |
+| `pandas` | Excel/CSV parsing for catalog import |
+| `openpyxl` | Excel `.xlsx` backend for pandas |
+| `pymupdf` (`fitz`) | PDF page splitting + embedded-image extraction |
 
 ---
 
@@ -128,7 +133,7 @@ OffGrid AI is a platform-agnostic retail intelligence layer. The backend closes 
 │  ┌───────────────────────────────────────────────────────────────┐  │
 │  │                  Vertex AI                                     │  │
 │  │  Gemini Flash (interactive)  ·  Gemini Pro (batch insight)    │  │
-│  │  Gemini Embeddings (text-embedding-004)                       │  │
+│  │  Gemini Embeddings (gemini-embedding-2)                       │  │
 │  └───────────────────────────────────────────────────────────────┘  │
 │                                                                     │
 │  Secret Manager · Cloud Scheduler · Artifact Registry · Cloud Logging│
@@ -142,7 +147,7 @@ OffGrid AI is a platform-agnostic retail intelligence layer. The backend closes 
 | Firestore | Native mode, `nam5` multi-region | Single source of truth; vector search built-in |
 | Cloud Storage | Standard class, `us-central1` | Return photos + catalog images; CORS locked to API domain |
 | BigQuery | `us` multi-region dataset | Event mirror; append-only |
-| Vertex AI | `us-central1` | Gemini Flash + Pro + text-embedding-004 |
+| Vertex AI | `us-central1` | Gemini Flash + Pro + gemini-embedding-2 |
 | Secret Manager | Regional `us-central1` | API service account key, Vertex AI credentials |
 | Artifact Registry | `us-central1` | Docker image store for Cloud Run deploys |
 | Cloud Scheduler | — | Nightly insight batch (cron: `0 2 * * *`) |
@@ -156,8 +161,9 @@ OffGrid AI is a platform-agnostic retail intelligence layer. The backend closes 
 
 | SA Name | Bound To | Roles Granted |
 |---|---|---|
-| `offgrid-api-sa` | Cloud Run API service | `roles/datastore.user`, `roles/storage.objectAdmin`, `roles/aiplatform.user`, `roles/secretmanager.secretAccessor` |
+| `offgrid-api-sa` | Cloud Run API service | `roles/datastore.user`, `roles/storage.objectAdmin`, `roles/aiplatform.user`, `roles/secretmanager.secretAccessor`, `roles/run.invoker` (to trigger catalog import jobs) |
 | `offgrid-agent-sa` | Cloud Run agent workers | `roles/datastore.user`, `roles/aiplatform.user`, `roles/storage.objectViewer` |
+| `offgrid-import-sa` | Cloud Run Job `offgrid-catalog-import` | `roles/datastore.user`, `roles/storage.objectAdmin`, `roles/aiplatform.user` — storage.objectAdmin needed to write extracted page JSON and the final report |
 | `offgrid-scheduler-sa` | Cloud Scheduler jobs | `roles/run.invoker` (can invoke the insight batch endpoint only) |
 | `offgrid-bq-writer-sa` | Eventarc / Dataflow | `roles/bigquery.dataEditor` on the events dataset only |
 
@@ -257,7 +263,7 @@ class SKU(BaseModel):
     return_rate: float        # 0.0–1.0; drives Fit-Check trigger
     image_url: str            # Cloud Storage signed URL or public CDN URL
     attributes: dict[str, str]  # {"material": "rattan", "color": "natural"}
-    embedding: list[float]    # Gemini text-embedding-004 vector (768-dim)
+    embedding: list[float]    # Gemini gemini-embedding-2 vector (768-dim)
     store_availability: dict[str, int]  # {"store_001": 5, "store_002": 0}
     is_return_prone: bool     # Derived: category in ["footwear","apparel"] AND return_rate > 0.2
     created_at: datetime
@@ -437,6 +443,59 @@ class ChatSource(BaseModel):
 
 ---
 
+---
+
+#### `catalog_import_jobs` Collection
+
+Tracks async catalog-import pipeline runs. One document per import job, updated as the pipeline progresses through stages.
+
+```python
+class CatalogImportJob(BaseModel):
+    job_id: str                   # Firestore document ID (UUID v4)
+    store_id: str
+    initiated_by_uid: str         # Firebase UID (admin role required)
+    input_type: str               # "url" | "pdf" | "image" | "excel" | "csv"
+    input_source: str             # URL string, or GCS object path for uploaded files
+    crawl_depth: int              # Applicable when input_type == "url"; 1–3
+    dry_run: bool                 # True → normalize + preview only; do not write to catalog
+    status: ImportStatus
+    progress: ImportProgress
+    result: ImportResult | None   # Populated on status == "done"
+    error_message: str | None     # Populated on status == "failed"
+    created_at: datetime
+    completed_at: datetime | None
+
+class ImportStatus(str, Enum):
+    PENDING    = "pending"        # Job created; worker not yet started
+    UPLOADING  = "uploading"      # File being written to GCS (URL input: crawling)
+    EXTRACTING = "extracting"     # LLM extracting raw product entities
+    NORMALIZING = "normalizing"   # Converting raw entities to SKU schema
+    DEDUPLICATING = "deduplicating" # Checking against existing catalog
+    EMBEDDING  = "embedding"      # Generating Gemini embeddings for new SKUs
+    WRITING    = "writing"        # Committing SKU documents to Firestore
+    DONE       = "done"
+    FAILED     = "failed"
+
+class ImportProgress(BaseModel):
+    pages_crawled: int            # URL input only
+    raw_entities_found: int       # Total product-like entities extracted
+    skus_normalized: int          # Entities successfully converted to SKU schema
+    skus_deduplicated: int        # Skipped — already in catalog
+    skus_invalid: int             # Failed validation — written to error_details
+    skus_added: int               # Actually committed to Firestore catalog
+    embeddings_generated: int
+
+class ImportResult(BaseModel):
+    skus_added: int
+    skus_skipped_duplicate: int
+    skus_skipped_invalid: int
+    sample_sku_ids: list[str]     # First 5 added SKU IDs for spot-checking
+    error_details: list[dict]     # Per-entity errors with raw data for debugging
+    gcs_report_path: str          # Full JSON report written to Cloud Storage
+```
+
+---
+
 ### 6.2 BigQuery Dataset: `offgrid_events`
 
 Mirror of Firestore `events` for SQL analytics. Eventarc writes to this automatically.
@@ -472,14 +531,26 @@ Bucket: `offgrid-ai-assets`
 offgrid-ai-assets/
 ├── catalog/
 │   └── images/
-│       └── {sku_id}.jpg          # Product images (public-read)
+│       └── {sku_id}.jpg                    # Product images (public-read)
 ├── returns/
 │   └── {store_id}/
-│       └── {assessment_id}.jpg   # Return photos (private; signed URL for associate access)
-└── shelf/
+│       └── {assessment_id}.jpg             # Return photos (private; signed URL for associate)
+├── shelf/
+│   └── {store_id}/
+│       └── {timestamp}.jpg                 # Shelf photos (future: planogram compliance)
+└── imports/
     └── {store_id}/
-        └── {timestamp}.jpg       # Shelf photos (future: planogram compliance)
+        └── {job_id}/
+            ├── source.<ext>                # Original uploaded file (PDF/image/xlsx/csv)
+            ├── extracted_pages/
+            │   └── page_{n}.json          # RawPage JSON, one file per page/row (debug)
+            └── report.json                # Final import report with error_details + sku_ids
 ```
+
+**Access policy by prefix:**
+- `catalog/images/` — public-read (no auth; served directly to shopper widget)
+- `returns/` — private; associate accesses via V4 signed URL (1h TTL, scoped to `assessment_id`)
+- `imports/` — private; admin only; `source.*` and `report.json` accessible via signed URL
 
 ---
 
@@ -517,6 +588,15 @@ offgrid-ai-assets/
 | POST | `/search/voice` | `shopper` | Intent + Discovery | OG-049: Multilingual & voice-first search |
 | GET | `/follow-up/{session_id}` | `shopper` | None (reads Firestore) | OG-050: Post-purchase fit follow-up |
 | POST | `/insights/chat` | `merchant` | Insight (chat mode) | OG-051: Ask-your-data merchant chat |
+
+**Catalog Import endpoints (Onboarding feature):**
+
+| Method | Path | Role Required | Agent(s) Invoked | Description |
+|---|---|---|---|---|
+| POST | `/catalog/import` | `admin` | CatalogImport | Start an import job (URL, PDF, image, Excel, CSV) |
+| GET | `/catalog/import/{job_id}` | `admin` | None | Poll job status and progress |
+| GET | `/catalog/import/{job_id}/preview` | `admin` | None | Preview first 10 normalized SKU candidates |
+| POST | `/catalog/import/{job_id}/confirm` | `admin` | None | Confirm a `dry_run` job — write to Firestore |
 
 ---
 
@@ -980,7 +1060,7 @@ def compute_urgency_days(cluster: Cluster, prior_cluster: Cluster | None) -> int
     if prior_cluster is None or cluster.occurrences < MIN_EVENTS_FOR_URGENCY:
         return None                    # Insufficient history — omit rather than guess
 
-    daily_rate = cluster.occurrences / TIME_WINDOW_DAYS    # e.g. 14 / 7 = 2.0/day
+    daily_rate = cluster.occurrences / TIME_WINDOW_DAYS    # e.g. 14 / 7 = 3.6/day
     trend_multiplier = 1 + (cluster.trend_pct / 100) if cluster.trend_pct else 1.0
 
     # Project forward: at current growth rate, how many days until this signal
@@ -993,6 +1073,172 @@ def compute_urgency_days(cluster: Cluster, prior_cluster: Cluster | None) -> int
 ```
 If urgency_days is present, include exactly: "at the current pace, consider restocking within about {urgency_days} days."
 If urgency_days is null, omit any urgency reference entirely.
+```
+
+---
+
+---
+
+### 7.5 Catalog Import Endpoint Schemas
+
+#### `POST /catalog/import` — Start an Import Job
+
+Accepts a URL or an uploaded file (PDF, image, Excel, CSV). Creates a `catalog_import_jobs` document, kicks off the async import worker (Cloud Run Job), and returns `job_id` immediately — the caller polls `GET /catalog/import/{job_id}` for progress.
+
+**Request — URL input (JSON):**
+```json
+{
+  "input_type": "url",
+  "url": "https://merchant-store.com/products",
+  "crawl_depth": 3,
+  "store_id": "store_001",
+  "dry_run": false
+}
+```
+
+**Request — File input (multipart/form-data):**
+```
+file: <binary>         # PDF / JPEG / PNG / .xlsx / .csv
+input_type: "pdf"      # "pdf" | "image" | "excel" | "csv"
+store_id: "store_001"
+dry_run: false         # true = normalize + preview only; do not write catalog
+```
+
+**Validation on receipt:**
+- URL input: validate URL format and reachability (HEAD request) before starting job
+- File input: validate MIME type matches `input_type`; reject files > 50 MB
+- `crawl_depth` clamped to 1–3; defaults to 3
+
+**Processing on receipt:**
+```
+1. Validate input
+2. If file: upload to Cloud Storage at imports/{store_id}/{job_id}/source.<ext>
+3. Create catalog_import_jobs document with status: "pending"
+4. Invoke Cloud Run Job `offgrid-catalog-import` with job_id as argument (async)
+5. Return job_id immediately
+```
+
+**Response 202:**
+```json
+{
+  "job_id": "imp-uuid",
+  "status": "pending",
+  "input_type": "url",
+  "input_source": "https://merchant-store.com/products",
+  "message": "Import job started. Poll GET /catalog/import/imp-uuid for progress."
+}
+```
+
+---
+
+#### `GET /catalog/import/{job_id}` — Poll Job Status
+
+**Response 200 — in progress:**
+```json
+{
+  "job_id": "imp-uuid",
+  "status": "extracting",
+  "input_type": "url",
+  "progress": {
+    "pages_crawled": 42,
+    "raw_entities_found": 0,
+    "skus_normalized": 0,
+    "skus_deduplicated": 0,
+    "skus_invalid": 0,
+    "skus_added": 0,
+    "embeddings_generated": 0
+  },
+  "created_at": "2026-09-23T10:00:00Z",
+  "completed_at": null
+}
+```
+
+**Response 200 — completed:**
+```json
+{
+  "job_id": "imp-uuid",
+  "status": "done",
+  "input_type": "url",
+  "progress": {
+    "pages_crawled": 87,
+    "raw_entities_found": 312,
+    "skus_normalized": 289,
+    "skus_deduplicated": 14,
+    "skus_invalid": 23,
+    "skus_added": 275,
+    "embeddings_generated": 275
+  },
+  "result": {
+    "skus_added": 275,
+    "skus_skipped_duplicate": 14,
+    "skus_skipped_invalid": 23,
+    "sample_sku_ids": ["SKU-301", "SKU-302", "SKU-303", "SKU-304", "SKU-305"],
+    "error_details": [
+      {
+        "raw_name": "Bundle Pack — no price",
+        "reason": "price_missing"
+      }
+    ],
+    "gcs_report_path": "imports/store_001/imp-uuid/report.json"
+  },
+  "created_at": "2026-09-23T10:00:00Z",
+  "completed_at": "2026-09-23T10:03:47Z"
+}
+```
+
+---
+
+#### `GET /catalog/import/{job_id}/preview` — Preview Normalized SKUs
+
+Only meaningful after `status == "normalizing"` or `"done"` (for `dry_run` jobs). Returns the first 10 normalized SKU candidates so an admin can spot-check before committing.
+
+**Response 200:**
+```json
+{
+  "job_id": "imp-uuid",
+  "total_normalized": 289,
+  "preview": [
+    {
+      "candidate_id": "cand-001",
+      "name": "Heritage Canvas Tote",
+      "category": "accessories",
+      "price": 1299.00,
+      "currency": "INR",
+      "attributes": {"material": "canvas", "color": "natural"},
+      "stock": 50,
+      "return_rate": 0.05,
+      "image_url": "https://merchant-store.com/images/tote-natural.jpg",
+      "source_page": "https://merchant-store.com/products/tote",
+      "confidence": 0.94
+    }
+  ]
+}
+```
+
+`confidence` is a Python-computed score (0–1) based on how many required SKU fields were populated from the source data vs. defaulted. It is never computed by the LLM.
+
+---
+
+#### `POST /catalog/import/{job_id}/confirm` — Confirm a Dry-Run Job
+
+Only valid when `dry_run: true` and `status: "done"`. Triggers the write-to-catalog + embedding stage.
+
+**Request:**
+```json
+{
+  "exclude_candidate_ids": ["cand-003", "cand-017"]
+}
+```
+
+**Response 200:**
+```json
+{
+  "job_id": "imp-uuid",
+  "status": "writing",
+  "skus_to_write": 287,
+  "skus_excluded": 2,
+  "message": "Writing to catalog and generating embeddings. Poll GET /catalog/import/imp-uuid for completion."
+}
 ```
 
 ---
@@ -1057,7 +1303,7 @@ ROUTING = {
 
 **File:** `backend/agents/discovery.py`
 
-**Model:** `gemini-2.0-flash`
+**Model:** `gemini-3.6-flash`
 
 **Tools (Gemini function-calling schema):**
 ```python
@@ -1130,7 +1376,7 @@ STRICT RULES:
 
 **File:** `backend/agents/fit_check.py`
 
-**Model:** `gemini-2.0-flash`
+**Model:** `gemini-3.6-flash`
 
 **Trigger condition (Python, NOT LLM):**
 ```python
@@ -1190,7 +1436,7 @@ RESOLUTION_MAP = {
 
 **File:** `backend/agents/return_intel.py`
 
-**Model:** `gemini-2.0-flash` (multimodal)
+**Model:** `gemini-3.6-flash` (multimodal)
 
 **Two-stage design (per architecture review fix — these stages are ALWAYS separate):**
 
@@ -1250,7 +1496,7 @@ DISPOSITION_RULES = {
 
 **File:** `backend/agents/insight.py`
 
-**Model:** `gemini-2.0-pro` (batch)
+**Model:** `gemini-3.6-pro` (batch)
 
 **Pipeline (all numeric scoring in Python — zero LLM arithmetic):**
 
@@ -1300,7 +1546,7 @@ cluster.brief = gemini_pro.generate(BRIEF_PROMPT)
 
 **File:** `backend/agents/discovery_refinement.py`
 
-**Model:** `gemini-2.0-flash`
+**Model:** `gemini-3.6-flash`
 
 This is not a separate agent class — it is the `IntentDiscoveryAgent` invoked with a `refinement=True` flag and the session's existing `StructuredIntent` passed in context. No new Gemini call is made to re-parse intent from scratch.
 
@@ -1329,7 +1575,7 @@ This is not a separate agent class — it is the `IntentDiscoveryAgent` invoked 
 
 **File:** No new file — extension of `backend/agents/discovery.py`
 
-**Model:** `gemini-2.0-flash` (multimodal)
+**Model:** `gemini-3.6-flash` (multimodal)
 
 The existing `IntentDiscoveryAgent.run()` accepts an optional `audio_bytes: bytes | None` parameter. When present, the first Gemini call is replaced with a multimodal call that transcribes, detects language, and extracts intent in a single round-trip.
 
@@ -1363,7 +1609,7 @@ From step 2 onward (embedding → vector search → threshold routing → explan
 
 **Trigger:** Called by `FitCheckAgent` immediately after logging a `fit_check` event whose resolution is `confirmed` or `size_changed`. Never called for `abandoned`.
 
-**Model:** `gemini-2.0-flash`
+**Model:** `gemini-3.6-flash`
 
 ```python
 FOLLOW_UP_PROMPTS = {
@@ -1392,7 +1638,7 @@ The generated message is written to `follow_up_notifications` document (see §6.
 
 **File:** `backend/agents/insight_chat.py`
 
-**Model:** `gemini-2.0-pro`
+**Model:** `gemini-3.6-pro`
 
 This is a separate class from the batch `InsightAgent` — it is stateful across turns (loads `MerchantChatSession` from Firestore) and uses a different system prompt and tool set.
 
@@ -1428,6 +1674,196 @@ def is_unanswerable(answer: str) -> bool:
 ```
 
 Sets `unanswerable: true` in the response when detected — this field lets the Next.js frontend render a distinct "I can't answer that" state rather than a normal answer card.
+
+---
+
+#### Catalog Import Agent
+
+**File:** `backend/agents/catalog_import.py`
+
+**Model:** `gemini-3.6-flash` (multimodal for PDF/image; text for Excel/CSV/URL)
+
+**Runtime:** Cloud Run Job — not a service. Invoked by `POST /catalog/import`, runs to completion independently of the HTTP response.
+
+This agent orchestrates a four-stage pipeline. Each stage updates `catalog_import_jobs.status` in Firestore so the admin can poll progress in real time.
+
+---
+
+**Stage 1 — Source Ingestion** *(Python, no LLM)*
+
+Behavior varies by `input_type`. The output of all branches is the same: a list of `RawPage` objects, each containing raw text and image URLs extracted from one page or file section.
+
+```python
+class RawPage(BaseModel):
+    source_url: str | None      # URL of the page (URL input only)
+    depth: int                   # Crawl depth level (URL input only)
+    raw_text: str                # All visible text from the page or document section
+    image_urls: list[str]        # Product image URLs found on the page
+    input_type: str
+```
+
+**Branch — URL:**
+```
+Crawler (httpx + BeautifulSoup):
+  1. Fetch seed URL (depth 0)
+  2. Extract all same-domain <a href> links
+  3. Filter links:
+     - Must be same domain as seed URL
+     - Path must not match NON_PRODUCT_PATTERNS = ["/about", "/contact", "/blog", "/faq", "/policy"]
+     - Must not have been visited already (dedup set)
+  4. For each accepted link, fetch page content
+  5. Repeat up to crawl_depth (default 3)
+  6. Rate limit: 500ms delay between requests; respect robots.txt
+
+Output: one RawPage per crawled URL
+```
+
+**Branch — PDF:**
+```
+1. Download from GCS (already uploaded by the API handler)
+2. Split into pages (PyMuPDF or similar)
+3. Each page → RawPage(raw_text=page_text, image_urls=[embedded_image_gcs_paths])
+   Embedded images are extracted and uploaded to GCS for later Gemini multimodal access
+```
+
+**Branch — Image (JPEG/PNG):**
+```
+1. Download from GCS
+2. Single RawPage with raw_text="" and image_urls=[gcs_path]
+   (All extraction happens in Stage 2 via Gemini Vision)
+```
+
+**Branch — Excel / CSV:**
+```
+1. Download from GCS
+2. Parse with pandas → DataFrame
+3. Send column headers + first 5 rows to Gemini Flash:
+   COLUMN_MAPPING_PROMPT:
+   "Map these columns to SKU fields: name, category, price, stock, attributes, image_url.
+    Return a JSON mapping {source_column: sku_field | null}.
+    Only map columns that clearly correspond to a SKU field."
+4. Apply mapping to all rows → list of raw_product dicts
+5. Each dict → RawPage(raw_text=json.dumps(raw_product), image_urls=[])
+```
+
+---
+
+**Stage 2 — Entity Extraction** *(Gemini Flash)*
+
+One Gemini call per `RawPage`. Extracts all product-like entities found in the page content.
+
+```python
+EXTRACTION_PROMPT = """
+You are a product catalog extractor. Read the page content and extract every distinct product you can identify.
+
+For each product output a JSON object with these fields:
+  name (string, required), description (string), price (number), currency (string),
+  category_hint (string), attributes (object of key-value pairs),
+  image_url (string), stock_hint (number or null)
+
+RULES:
+1. Only extract products explicitly mentioned in the page content.
+2. If a field is not present in the source, leave it null — do not infer or guess.
+3. If the page contains no products (e.g. it is a blog post or a contact page), return an empty array.
+4. Do not combine data from multiple products into one entry.
+
+Output: JSON array of product objects.
+"""
+```
+
+For image-only `RawPage` objects, the call is multimodal — the image is passed alongside the prompt.
+
+Results are aggregated across all pages into a flat `list[RawProductEntity]` and the progress counter `raw_entities_found` is updated.
+
+---
+
+**Stage 3 — Normalization to SKU Schema** *(Gemini Flash + Python validation)*
+
+Each `RawProductEntity` is converted to a `SKUCandidate`. The LLM maps fuzzy field values to the platform's controlled vocabulary; Python validates the result.
+
+```python
+NORMALIZATION_PROMPT = """
+Convert this raw product data to our SKU schema. Use ONLY information present in the raw data.
+
+Platform categories (use exactly one): footwear | apparel | home_goods | electronics | accessories | other
+Currency (use exactly one): INR | USD | GBP | EUR
+
+Output a single JSON object:
+  sku_id: generate a unique slug from the name (e.g. "heritage-canvas-tote")
+  name, description, category, price (float), currency, stock (int, default 0 if unknown),
+  return_rate (float, default by category: footwear=0.22, apparel=0.18, electronics=0.12, other=0.05),
+  attributes (object), image_url (string or null)
+
+RULES:
+1. Do not invent a price if none is in the raw data — set price to null and the validator will reject it.
+2. return_rate must use the category default shown above unless a specific rate is in the raw data.
+3. Do not merge attributes from multiple products.
+"""
+```
+
+**Python validation after normalization:**
+```python
+REQUIRED_FIELDS = ["name", "category", "price", "currency"]
+
+def validate_candidate(candidate: dict) -> tuple[bool, str | None]:
+    for field in REQUIRED_FIELDS:
+        if not candidate.get(field):
+            return False, f"{field}_missing"
+    if candidate["category"] not in VALID_CATEGORIES:
+        return False, "invalid_category"
+    if not isinstance(candidate["price"], (int, float)) or candidate["price"] <= 0:
+        return False, "invalid_price"
+    return True, None
+```
+
+Invalid candidates are recorded in `error_details` and excluded from downstream stages — the job does not fail, it continues with valid candidates only.
+
+**Deduplication (Python — no LLM):**
+```python
+# Exact name match against existing catalog (case-insensitive)
+existing_names = {s.name.lower() for s in await firestore.get_all_sku_names(store_id)}
+for candidate in valid_candidates:
+    if candidate.name.lower() in existing_names:
+        candidate.is_duplicate = True
+        progress.skus_deduplicated += 1
+```
+
+**`confidence` score (Python formula, never LLM):**
+```python
+FIELD_WEIGHTS = {"name": 0.3, "price": 0.25, "category": 0.2, "image_url": 0.15, "description": 0.1}
+
+def compute_confidence(candidate: dict) -> float:
+    return sum(
+        weight for field, weight in FIELD_WEIGHTS.items()
+        if candidate.get(field) is not None
+    )
+```
+
+---
+
+**Stage 4 — Embedding + Catalog Write** *(Python + Vertex AI)*
+
+Only runs when `dry_run=False` (or after `POST /catalog/import/{job_id}/confirm` on a dry-run job).
+
+```python
+async def embed_and_write(candidates: list[SKUCandidate], store_id: str):
+    # Batch embedding — 100 SKUs per API call to stay within rate limits
+    for batch in chunked(candidates, 100):
+        texts = [f"{c.name}. {c.description}. {' '.join(f'{k}: {v}' for k,v in c.attributes.items())}" for c in batch]
+        embeddings = await vertex_embeddings.embed_batch(texts, model="gemini-embedding-2")
+        for candidate, embedding in zip(batch, embeddings):
+            sku = SKU(
+                sku_id=candidate.sku_id,
+                embedding=embedding,
+                **candidate.model_dump(exclude={"sku_id", "is_duplicate", "confidence"})
+            )
+            await firestore.upsert_sku(sku)
+            progress.skus_added += 1
+            progress.embeddings_generated += 1
+        await asyncio.sleep(0.1)   # Respect Vertex AI quota
+```
+
+After writing, a JSON report is uploaded to `imports/{store_id}/{job_id}/report.json` in Cloud Storage and the job status is set to `"done"`.
 
 ---
 
@@ -1568,7 +2004,114 @@ FastAPI — update ReturnAssessment: disposition_confirmed=True, confirmed_at=no
 
 ---
 
-### 9.4 Event → BigQuery Mirror Flow
+### 9.4 Catalog Import Flow
+
+```
+Admin (Next.js dashboard)
+  │
+  │  POST /catalog/import
+  │  {input_type: "url", url: "...", crawl_depth: 3, store_id: "...", dry_run: false}
+  │  Bearer: <admin JWT>
+  ▼
+FastAPI — verify_token() → role_guard("admin")
+  │
+  ├── [URL input] HEAD request to validate URL is reachable → HTTP 400 if not
+  ├── [File input] Upload file to GCS: imports/{store_id}/{job_id}/source.<ext>
+  │
+  ├── Create catalog_import_jobs document:
+  │     status: "pending", progress: all zeros, input_source: url/gcs_path
+  │
+  ├── Invoke Cloud Run Job offgrid-catalog-import --job-id <job_id> (async)
+  │
+  └── HTTP 202 → {job_id, status: "pending", message: "Poll GET /catalog/import/{job_id}"}
+
+━━━━━━━━━━━ Cloud Run Job runs independently ━━━━━━━━━━━
+
+STAGE 1 — Source Ingestion
+  │
+  ├── [URL branch]
+  │   ├── Update status: "uploading" (crawling)
+  │   ├── Fetch seed URL → extract links (httpx + BeautifulSoup)
+  │   ├── Filter: same domain only, skip NON_PRODUCT_PATTERNS
+  │   ├── BFS up to crawl_depth=3 with 500ms rate-limit delay
+  │   ├── Respect robots.txt — skip disallowed paths
+  │   └── Output: list[RawPage], one per crawled URL
+  │   
+  ├── [PDF branch]
+  │   ├── Download from GCS
+  │   ├── Split pages via PyMuPDF
+  │   ├── Extract embedded images → upload each to GCS
+  │   └── Output: list[RawPage], one per PDF page
+  │   
+  ├── [Image branch]
+  │   └── Output: single RawPage(raw_text="", image_urls=[gcs_path])
+  │
+  └── [Excel/CSV branch]
+      ├── Parse with pandas → DataFrame
+      ├── Gemini Flash: map source columns → SKU fields
+      ├── Apply mapping → list of raw_product dicts
+      └── Output: list[RawPage], one per row
+
+STAGE 2 — Entity Extraction (Gemini Flash — one call per RawPage)
+  │
+  ├── Update status: "extracting"
+  ├── For each RawPage:
+  │   ├── [has image_urls] Gemini Flash multimodal call → list[RawProductEntity]
+  │   └── [text only]      Gemini Flash text call       → list[RawProductEntity]
+  ├── Aggregate all entities into flat list
+  ├── Update progress.raw_entities_found
+  └── Skip pages where Gemini returns [] (blog, contact, navigation pages)
+
+STAGE 3 — Normalization + Validation + Deduplication (Gemini Flash + Python)
+  │
+  ├── Update status: "normalizing"
+  ├── For each RawProductEntity:
+  │   ├── Gemini Flash: convert to SKUCandidate (controlled-vocab category, return_rate default)
+  │   ├── Python validate_candidate():
+  │   │   ├── PASS → compute_confidence() → mark valid
+  │   │   └── FAIL → record in error_details, skip
+  │   └── Python dedup check: name.lower() in existing catalog names → mark duplicate
+  │
+  ├── Update progress.skus_normalized, skus_invalid, skus_deduplicated
+  │
+  └── [dry_run=True] → update status: "done", stop here
+                        Admin may call GET /preview then POST /confirm
+
+STAGE 4 — Embedding + Catalog Write (only if dry_run=False or after /confirm)
+  │
+  ├── Update status: "embedding"
+  ├── Batch Vertex AI gemini-embedding-2 calls (100 SKUs per batch)
+  │   ├── Input text: "{name}. {description}. {attributes as k:v string}"
+  │   ├── Output: 768-dim float vector per SKU
+  │   └── 100ms sleep between batches (Vertex AI quota)
+  │
+  ├── Update status: "writing"
+  ├── Firestore upsert each SKU document (catalog collection)
+  │   └── Update progress.skus_added, embeddings_generated after each batch
+  │
+  ├── Upload JSON report to GCS: imports/{store_id}/{job_id}/report.json
+  │   └── Contains: full error_details list, all added sku_ids, timing stats
+  │
+  └── Update status: "done", completed_at: now()
+
+━━━━━━━━━━━ Admin polls for completion ━━━━━━━━━━━
+
+Admin frontend
+  │
+  │  GET /catalog/import/{job_id}   (polling, or Firestore onSnapshot)
+  ▼
+  ├── status: "extracting" / "normalizing" / "embedding" → show progress bar
+  ├── status: "done" → show result summary + sample_sku_ids
+  └── status: "failed" → show error_message + link to GCS report
+```
+
+**Error handling across all stages:**
+- Network failures during URL crawl → retry 3× with exponential backoff; mark individual pages as failed, continue with others
+- Gemini rate limit → `tenacity` exponential backoff; log each retry; never abort the job
+- Validation failure on individual entity → record in `error_details`, continue
+- Unrecoverable failure (GCS permission denied, Firestore write error) → set `status: "failed"` with `error_message`
+
+### 9.5 Event → BigQuery Mirror Flow
 
 ```
 Firestore write: events/{event_id}
@@ -1605,7 +2148,10 @@ backend/
 │   ├── fit_check.py               # POST /fit-check, GET /follow-up/{session_id}
 │   ├── return_intel.py            # POST /return, POST /return/{id}/confirm
 │   ├── insights.py                # GET /insights, POST /insights/generate, POST /insights/chat
-│   └── admin.py                   # POST /catalog/embed, etc.
+│   └── catalog.py                 # POST /catalog/import, GET /catalog/import/{id},
+│                                  # GET /catalog/import/{id}/preview,
+│                                  # POST /catalog/import/{id}/confirm,
+│                                  # POST /catalog/embed, GET /catalog/{sku_id}
 │
 ├── agents/
 │   ├── orchestrator.py
@@ -1614,7 +2160,8 @@ backend/
 │   ├── fit_check.py               # Fit-Check + follow-up generation — OG-019–022, OG-050
 │   ├── return_intel.py            # Return Intelligence — OG-037–039
 │   ├── insight.py                 # Batch insight pipeline — OG-023–028, OG-052, OG-053
-│   └── insight_chat.py            # Ask-your-data merchant chat — OG-051
+│   ├── insight_chat.py            # Ask-your-data merchant chat — OG-051
+│   └── catalog_import.py          # Catalog import pipeline (URL/PDF/image/Excel/CSV)
 │
 ├── models/
 │   ├── session.py
@@ -1623,37 +2170,53 @@ backend/
 │   ├── insight.py
 │   ├── return_assessment.py
 │   ├── follow_up_notification.py  # OG-050
-│   └── merchant_chat_session.py   # OG-051
+│   ├── merchant_chat_session.py   # OG-051
+│   └── catalog_import_job.py      # Catalog import job + progress tracking
 │
 ├── services/
 │   ├── firestore.py               # Firestore client + typed CRUD helpers
 │   ├── embeddings.py              # Vertex AI Embeddings wrapper
 │   ├── storage.py                 # Cloud Storage upload/signed-URL
-│   └── bigquery.py                # BQ insert helpers
+│   ├── bigquery.py                # BQ insert helpers
+│   └── crawler.py                 # URL crawler (httpx + BeautifulSoup, depth-3, robots.txt)
 │
 ├── scripts/
 │   ├── seed_catalog.py            # OG-006: load SKUs to Firestore
 │   ├── generate_embeddings.py     # OG-007: embed catalog
-│   └── bq_mirror_handler.py       # Eventarc handler for BQ mirror
+│   ├── bq_mirror_handler.py       # Eventarc handler for BQ mirror
+│   └── catalog_import_runner.py   # Cloud Run Job entrypoint — reads job_id arg, runs pipeline
 │
 └── tests/
     ├── unit/
     │   ├── test_discovery.py
     │   ├── test_fit_check.py
-    │   ├── test_insight_scoring.py  # All numeric assertions
-    │   └── test_return_intel.py
+    │   ├── test_insight_scoring.py   # All numeric assertions
+    │   ├── test_return_intel.py
+    │   ├── test_catalog_import_normalization.py  # Validation + confidence score assertions
+    │   └── test_crawler.py           # Depth/filter/robots.txt logic (mocked HTTP)
     └── integration/
-        ├── test_search_flow.py      # Hits real Firestore (test project)
-        └── test_insight_pipeline.py
+        ├── test_search_flow.py       # Hits real Firestore (test project)
+        ├── test_insight_pipeline.py
+        └── test_catalog_import_e2e.py  # Small seed URL + real Firestore import
 ```
 
 ### 10.2 Cloud Run Services
+
+**Cloud Run Services** (long-running, HTTP):
 
 | Service Name | Entry Point | CPU | Memory | Min Instances | Timeout |
 |---|---|---|---|---|---|
 | `offgrid-api` | `uvicorn main:app` | 1 | 1 GiB | 1 (keep warm) | 60s |
 | `offgrid-agent` | orchestrator dispatch | 2 | 2 GiB | 0 (scale-to-zero ok) | 120s |
 | `offgrid-bq-mirror` | `bq_mirror_handler.py` | 1 | 512 MiB | 0 | 30s |
+
+**Cloud Run Jobs** (run-to-completion, async):
+
+| Job Name | Entry Point | CPU | Memory | Max Retries | Max Runtime |
+|---|---|---|---|---|---|
+| `offgrid-catalog-import` | `catalog_import_runner.py` | 2 | 4 GiB | 1 | 30 min |
+
+The catalog import job is invoked via `gcloud run jobs execute offgrid-catalog-import --args job_id=<id>` from within the API service. The 4 GiB memory ceiling covers large Excel files (pandas) and batched embedding payloads. 30-minute timeout covers a depth-3 crawl of a large merchant site (typically 50–200 pages).
 
 ### 10.3 Deployment Pipeline
 
@@ -1794,6 +2357,24 @@ Secrets in Secret Manager:
 
 ---
 
+### Phase 5B — Catalog Import Onboarding *(only if Phase 5A is stable)*
+**Duration: Day 5–6 | Owner: Backend Lead**
+
+| Task | Deliverable | Exit Criteria |
+|---|---|---|
+| `catalog_import_jobs` Firestore collection + model | `models/catalog_import_job.py` | Typed document with all `ImportStatus` enum values |
+| Cloud Run Job `offgrid-catalog-import` scaffold | `scripts/catalog_import_runner.py` | Job executes, reads `job_id` arg, updates Firestore status to `"done"` with empty result |
+| URL crawler service | `services/crawler.py` | Depth-3 crawl of a test site; same-domain filter; robots.txt respected; returns `list[RawPage]` |
+| PDF + image extraction stage | Stage 2 of `catalog_import.py` | All 6 OG-011 return photos + a 5-page test PDF return plausible entity lists |
+| Excel/CSV column mapping | Stage 1 Excel branch | A 10-column product spreadsheet with non-standard headers maps to SKU fields correctly |
+| Normalization + validation stage | Stage 3 of `catalog_import.py` | Valid entities produce `confidence ≥ 0.5`; invalid (missing price) recorded in `error_details` |
+| Deduplication | Python name-match check | Re-importing the same product file adds 0 new SKUs |
+| Embedding + write stage | Stage 4 of `catalog_import.py` | 50 test candidates written to Firestore catalog with correct `embedding` field |
+| REST endpoints | `routers/catalog.py` | `POST /catalog/import` → job_id; `GET /catalog/import/{id}` → live status; `/preview` + `/confirm` work for dry-run flow |
+| Unit tests | `test_catalog_import_normalization.py`, `test_crawler.py` | Confidence formula, validate_candidate, classify_signal coverage |
+
+**Verification:** Import a real merchant URL (or a supplied product PDF) end-to-end on deployed infra. Confirm new SKUs appear in `GET /search` results within one minute of job completion.
+
 ### Phase 6 — Submission Assets
 **Duration: Day 6 | Owner: Whole Team**
 
@@ -1868,6 +2449,10 @@ class Settings(BaseSettings):
 | Return Intelligence fraud claim slippage | Medium | High | CONDITION_PROMPT explicitly forbids fraud language; risk scoring is Python-only (never passes through LLM) |
 | Phase 4 not stable before stretch work begins | Medium | High | Phase 4 exit criteria is a hard gate — stretch tickets never start until a teammate completes the cold walkthrough |
 | Demo Firestore data drifts between rehearsal and submission | Low | Medium | OG-047 mandates a full end-to-end run on live URLs ≤ 4h before submission deadline |
+| Catalog import: JS-rendered storefront pages not crawled by httpx | Medium | Medium | Playwright headless browser as a drop-in replacement for httpx on pages that return empty HTML — detect via response body length check post-fetch |
+| Catalog import: LLM returns empty entity list for text-heavy pages | Medium | Low | Per-page extraction; empty arrays are expected and skipped; overall job continues — only a problem if the entire crawl yields zero entities |
+| Catalog import: Vertex AI Embeddings quota exceeded on large catalog (500+ SKUs) | Low | Medium | Batch size of 100 + 100ms sleep between batches stays within default quota; raise limit in GCP console before a large import |
+| Catalog import job exceeds 30-minute timeout on very large sites | Low | Medium | Crawl depth is capped at 3 and `MAX_PAGES_PER_JOB = 300` constant prevents runaway crawls; document limit in admin UI |
 
 ---
 
