@@ -1,0 +1,40 @@
+/**
+ * OffgridAI — color tokens (elevated craft lock)
+ * Warm chalk surfaces. One signal accent. Color = state, not decoration.
+ */
+:root {
+  --ink: #111114;
+  --ink-soft: #1c1c22;
+  --chalk: #f7f6f3;
+  --paper: #ffffff;
+  --line: #e4e2dc;
+  --muted: #6b6b76;
+
+  /* Single primary — rescue / CTA */
+  --signal: #0a7f6c;
+  --signal-hover: #086657;
+  --signal-soft: #e3f3ef;
+
+  /* Fit-check attention only */
+  --amber: #c8880a;
+  --amber-soft: #f8efd9;
+
+  /* Revenue-at-risk / danger — sparse */
+  --coral: #c9403c;
+  --coral-soft: #f8e8e7;
+
+  /* Merchant signal_type accent only */
+  --violet-signal: #4f46b8;
+  --violet-signal-soft: #eceaf8;
+
+  --surface-page: var(--chalk);
+  --surface-card: var(--paper);
+  --surface-inverse: var(--ink);
+  --text-primary: var(--ink);
+  --text-secondary: var(--muted);
+  --text-on-ink: #f5f5f4;
+  --border-default: var(--line);
+  --action-primary: var(--signal);
+  --action-primary-hover: var(--signal-hover);
+  --focus-ring: color-mix(in srgb, var(--signal) 40%, transparent);
+}

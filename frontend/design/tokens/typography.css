@@ -1,0 +1,36 @@
+/**
+ * OffgridAI — typography tokens
+ * Display: Newsreader (editorial) · Body: IBM Plex Sans (precise UI)
+ */
+:root {
+  --font-family-display: var(--font-newsreader), "Newsreader", ui-serif, Georgia, serif;
+  --font-family-body: var(--font-ibm-plex-sans), "IBM Plex Sans", ui-sans-serif, system-ui,
+    sans-serif;
+
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --text-t1-size: clamp(2.25rem, 4vw, 3rem);
+  --text-t1-line: 1.08;
+  --text-t1-weight: var(--font-weight-medium);
+
+  --text-t2-size: clamp(1.5rem, 2.5vw, 1.875rem);
+  --text-t2-line: 1.2;
+  --text-t2-weight: var(--font-weight-medium);
+
+  --text-t3-size: 1.125rem;
+  --text-t3-line: 1.35;
+  --text-t3-weight: var(--font-weight-semibold);
+
+  --text-t4-size: 1rem;
+  --text-t4-line: 1.55;
+  --text-t4-weight: var(--font-weight-regular);
+
+  --text-t5-size: 0.8125rem;
+  --text-t5-line: 1.4;
+  --text-t5-weight: var(--font-weight-medium);
+
+  --tracking-display: -0.02em;
+}

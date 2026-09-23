@@ -1,0 +1,69 @@
+# Secrets & env
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.pem
+*.key
+credentials.json
+service-account*.json
+**/secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg
+
+# Node / frontend
+node_modules/
+.npm/
+.pnpm-store/
+dist/
+build/
+.next/
+.nuxt/
+.turbo/
+*.local
+
+# IDE / OS
+.idea/
+.vscode/*
+!.vscode/settings.json
+*.swp
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs & temp
+*.log
+logs/
+tmp/
+temp/
+.cache/
+
+# Local data / uploads
+uploads/
+data/local/
+*.sqlite
+*.db
+
+# Reference-only Next.js patterns (not part of the product)
+src_reference/
+**/src_reference/
+
+# Keep design tokens; ignore local Figma exports if added later
+frontend/design/**/*.fig
+frontend/design/**/*.figma

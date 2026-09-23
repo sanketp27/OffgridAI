@@ -192,3 +192,87 @@ Built for the next generation of commerce experiences.
 ## License
 
 OffgridAI is licensed under the [Apache License 2.0](LICENSE).
+
+---
+
+## Run the frontend locally
+
+The shopper / merchant / associate UI lives in [`frontend/`](frontend/) (Next.js 16 + React 19 + TypeScript).
+
+### Prerequisites
+
+1. **Git** installed and this repo cloned.
+2. **Node.js 20.9 or newer** (Node 22 LTS recommended). Check with:
+   ```bash
+   node -v
+   npm -v
+   ```
+3. If you use **nvm** on Windows and still see an old Node (for example v14):
+   ```bash
+   nvm install 22
+   nvm use 22
+   node -v
+   ```
+
+### Steps
+
+1. **Clone the repository** (skip if you already have it):
+   ```bash
+   git clone https://github.com/sanketp27/OffgridAI.git
+   cd OffgridAI
+   ```
+
+2. **Enter the frontend app**:
+   ```bash
+   cd frontend
+   ```
+
+3. **Install dependencies**:
+   ```bash
+   npm install
+   ```
+
+4. **Configure environment** (optional for local demo — mocks are on by default):
+   ```bash
+   # Windows (PowerShell)
+   Copy-Item .env.example .env.local
+
+   # macOS / Linux
+   cp .env.example .env.local
+   ```
+   Default `.env.local` values:
+   ```bash
+   NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+   NEXT_PUBLIC_USE_MOCK_API=true
+   ```
+   Keep `NEXT_PUBLIC_USE_MOCK_API=true` until the backend Cloud Run API is ready. To call a live API later, set it to `false` and point `NEXT_PUBLIC_API_BASE_URL` at your service URL.
+
+5. **Start the development server**:
+   ```bash
+   npm run dev
+   ```
+
+6. **Open the app in your browser**:
+   - Storefront (shopper): [http://localhost:3000](http://localhost:3000)
+   - Merchant insights: [http://localhost:3000/merchant](http://localhost:3000/merchant)
+   - Associate returns: [http://localhost:3000/associate](http://localhost:3000/associate)
+
+7. **Stop the server** when finished: press `Ctrl+C` in the terminal.
+
+### Useful commands
+
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Start local Next.js (Turbopack) on port 3000 |
+| `npm run build` | Production build |
+| `npm run start` | Serve the production build |
+| `npm run lint` | Run ESLint |
+
+### Quick demo path
+
+1. On `/`, use suggestion **Vague hiking intent** (or search `waterproof hiking boots under 4000`).
+2. Choose TrailGrip → answer the fit-check (for example **Size up to 9.5**).
+3. Open `/merchant` → **Generate Insights**.
+4. Optional: `/associate` → upload a photo + order ID → confirm disposition.
+
+More detail: [`frontend/README.md`](frontend/README.md).
