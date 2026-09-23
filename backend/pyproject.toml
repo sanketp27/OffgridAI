@@ -1,0 +1,33 @@
+[project]
+name = "offgrid-backend"
+version = "0.1.0"
+description = "OffGrid AI backend — common/core infrastructure layer (config, logging, retry, GCP clients)"
+requires-python = ">=3.12"
+dependencies = [
+    # --- Web / settings ---
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    # --- Google Cloud SDKs ---
+    "google-cloud-firestore>=2.19",
+    "google-cloud-bigquery>=3.27",
+    "google-cloud-storage>=2.18",
+    "google-cloud-secret-manager>=2.21",
+    # NOTE: `google-genai` is the current, actively-maintained SDK for both
+    # Gemini chat completions and embeddings on Vertex AI. The legacy
+    # `vertexai.generative_models` / `vertexai.language_models` modules that
+    # used to ship inside `google-cloud-aiplatform` were deprecated on
+    # 2025-06-24 and are being removed — do not use them for new code.
+    "google-genai>=1.15",
+    # `google-cloud-aiplatform` is kept only for the optional, stretch-goal
+    # Vertex AI Vector Search backend (`aiplatform.MatchingEngineIndexEndpoint`),
+    # which is a separate, non-deprecated part of that package.
+    "google-cloud-aiplatform>=1.114",
+    # --- Resilience / observability ---
+    "tenacity>=9.0",
+    "structlog>=24.4",
+    # --- Misc used by the clients below ---
+    "numpy>=2.1",
+]
+
+[tool.uv]
+package = true
