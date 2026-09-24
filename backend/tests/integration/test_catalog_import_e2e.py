@@ -40,10 +40,10 @@ async def test_url_import_against_a_small_test_storefront() -> None:
     settings = get_settings()
     context = AgentContext(
         settings=settings,
-        firestore=FirestoreService(settings.gcp_project_id, settings.firestore_database),
-        embeddings=EmbeddingsService(settings.gcp_project_id, settings.vertex_ai_location),
-        storage=StorageService(settings.gcp_project_id, settings.gcs_bucket),
-        bigquery=BigQueryService(settings.gcp_project_id, settings.bq_dataset),
+        firestore=FirestoreService(settings),
+        embeddings=EmbeddingsService(settings),
+        storage=StorageService(settings),
+        bigquery=BigQueryService(settings),
         store_id="store_001",
     )
     job = CatalogImportJob(

@@ -1,79 +1,109 @@
-"""services/embeddings.py — Vertex AI Embeddings wrapper.
+"""services/embeddings.py — Gemini Embeddings wrapper.
 
 Used by:
   * Discovery Agent (§8.2) — embed a shopper's structured intent at query time
   * Catalog Import Agent Stage 4 (§8.2, §9.4) — batch-embed new SKUs, 100 per
     call with a 100ms sleep between batches to respect Vertex AI quota
   * scripts/generate_embeddings.py — OG-007 initial catalog embedding
+
+Client-freshness note (audited when this file was integrated into the
+common/core scaffold): this used to call
+`vertexai.language_models.TextEmbeddingModel`, part of the generative-AI
+module set inside `google-cloud-aiplatform` that Google deprecated on
+2025-06-24 and is removing. It's rewritten here against `google-genai`
+(`from google import genai`), the current, unified SDK for both Vertex AI
+and the public Gemini Developer API — see
+`services/_genai_client_factory.py` for the shared client construction
+this and `agents/base.py`'s `GeminiClient` both use.
+
+Retry note: the previous implementation retried on bare `Exception` —
+including non-retryable errors like a bad request or a permissions
+failure — which just burns the retry budget on a call that was never
+going to succeed. This version retries only on the transient/rate-limit
+exceptions in `core.retry.RETRYABLE_EXCEPTIONS`.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable, Iterator, Sequence
-from typing import Any, TypeVar
 
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from google.genai import types as genai_types
 
-T = TypeVar("T")
+from config import Settings
+from core.exceptions import EmbeddingError, error_boundary
+from core.logging import get_logger
+from core.retry import retry_gemini_call
+from services._genai_client_factory import get_genai_client
+
+logger = get_logger(__name__)
 
 
-def chunked(items: Sequence[T], size: int) -> Iterator[list[T]]:
+def chunked[T](items: Sequence[T], size: int) -> Iterator[list[T]]:
     """Yield `items` in consecutive chunks of at most `size`."""
     for i in range(0, len(items), size):
         yield list(items[i : i + size])
 
 
 class EmbeddingsService:
-    def __init__(
-        self,
-        project_id: str,
-        location: str,
-        model_name: str = "gemini-embedding-2",
-        *,
-        batch_size: int = 100,
-        batch_sleep_seconds: float = 0.1,
-    ) -> None:
-        self._project_id = project_id
-        self._location = location
-        self._model_name = model_name
-        self._batch_size = batch_size
-        self._batch_sleep_seconds = batch_sleep_seconds
-        self._model: Any = None
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._model_name = settings.gemini_embedding_model
+        self._output_dimensionality = settings.embedding_dimensions
+        self._batch_size = settings.EMBEDDING_BATCH_SIZE
+        self._batch_sleep_seconds = settings.EMBEDDING_BATCH_SLEEP_SECONDS
+        self._client = get_genai_client(settings)
 
-    @property
-    def model(self) -> Any:
-        if self._model is None:
-            import vertexai
-            from vertexai.language_models import TextEmbeddingModel
+    @retry_gemini_call()
+    async def _embed_batch_call(self, texts: list[str], *, task_type: str) -> list[list[float]]:
+        with error_boundary(
+            logger, wrap=EmbeddingError, event="embedding_call_failed",
+            message="Gemini embedding call failed", model=self._model_name, batch_size=len(texts),
+        ):
+            response = await self._client.aio.models.embed_content(
+                model=self._model_name,
+                contents=texts,
+                config=genai_types.EmbedContentConfig(
+                    task_type=task_type,
+                    output_dimensionality=self._output_dimensionality,
+                ),
+            )
+            vectors = [list(e.values or []) for e in (response.embeddings or [])]
+            if len(vectors) != len(texts):
+                raise EmbeddingError(
+                    "embedding count did not match input count",
+                    context={"requested": len(texts), "returned": len(vectors)},
+                )
+            return vectors
 
-            vertexai.init(project=self._project_id, location=self._location)
-            self._model = TextEmbeddingModel.from_pretrained(self._model_name)
-        return self._model
+    async def embed_text(self, text: str, *, task_type: str = "RETRIEVAL_QUERY") -> list[float]:
+        """Embed a single string (e.g. a shopper's structured-intent text).
 
-    @retry(
-        stop=stop_after_attempt(4),
-        wait=wait_exponential(multiplier=1, min=1, max=20),
-        retry=retry_if_exception_type(Exception),
-        reraise=True,
-    )
-    async def embed_text(self, text: str) -> list[float]:
-        """Embed a single string (e.g. a shopper's structured-intent text)."""
-        vectors = await asyncio.to_thread(self._embed_texts_sync, [text])
+        Defaults to the "RETRIEVAL_QUERY" task type — this method's callers
+        (Discovery Agent, at query time) are embedding the *search* side of
+        an asymmetric retrieval pair; catalog SKUs are embedded with
+        `embed_batch(..., task_type="RETRIEVAL_DOCUMENT")` (the default),
+        which the embedding model optimizes for differently.
+        """
+        vectors = await self._embed_batch_call([text], task_type=task_type)
         return vectors[0]
 
-    async def embed_batch(self, texts: Iterable[str]) -> list[list[float]]:
+    async def embed_batch(
+        self, texts: Iterable[str], *, task_type: str = "RETRIEVAL_DOCUMENT"
+    ) -> list[list[float]]:
         """Embed many strings, batched at `batch_size` with a quota-friendly
         sleep between batches — used by the catalog-import Stage 4 writer.
+
+        Defaults to "RETRIEVAL_DOCUMENT" — the catalog side of the
+        asymmetric retrieval pair (see `embed_text`).
         """
         all_vectors: list[list[float]] = []
-        for batch in chunked(list(texts), self._batch_size):
-            vectors = await asyncio.to_thread(self._embed_texts_sync, batch)
+        batches = list(chunked(list(texts), self._batch_size))
+        for i, batch in enumerate(batches):
+            vectors = await self._embed_batch_call(batch, task_type=task_type)
             all_vectors.extend(vectors)
-            if self._batch_sleep_seconds:
+            is_last = i == len(batches) - 1
+            if self._batch_sleep_seconds and not is_last:
                 await asyncio.sleep(self._batch_sleep_seconds)
+        logger.info("embed_batch_complete", total_texts=len(all_vectors), batches=len(batches))
         return all_vectors
-
-    def _embed_texts_sync(self, texts: list[str]) -> list[list[float]]:
-        embeddings = self.model.get_embeddings(texts)
-        return [list(e.values) for e in embeddings]

@@ -33,10 +33,10 @@ async def test_insight_generation_creates_stored_insights_from_seeded_events() -
     settings = get_settings()
     context = AgentContext(
         settings=settings,
-        firestore=FirestoreService(settings.gcp_project_id, settings.firestore_database),
-        embeddings=EmbeddingsService(settings.gcp_project_id, settings.vertex_ai_location),
-        storage=StorageService(settings.gcp_project_id, settings.gcs_bucket),
-        bigquery=BigQueryService(settings.gcp_project_id, settings.bq_dataset),
+        firestore=FirestoreService(settings),
+        embeddings=EmbeddingsService(settings),
+        storage=StorageService(settings),
+        bigquery=BigQueryService(settings),
         store_id="store_001",
     )
 

@@ -21,6 +21,7 @@ import uuid
 from pathlib import Path
 
 from config import get_settings
+from core.logging import configure_logging
 from models.sku import SKU
 from services.embeddings import EmbeddingsService
 from services.firestore import FirestoreService
@@ -33,7 +34,8 @@ def _slugify(name: str) -> str:
 
 async def seed(fixture_path: Path, store_id: str, embed: bool) -> None:
     settings = get_settings()
-    db = FirestoreService(project_id=settings.gcp_project_id, database=settings.firestore_database)
+    configure_logging(settings)
+    db = FirestoreService(settings)
 
     raw_records = json.loads(fixture_path.read_text())
     if not isinstance(raw_records, list):
@@ -47,13 +49,7 @@ async def seed(fixture_path: Path, store_id: str, embed: bool) -> None:
         skus.append(SKU.model_validate(record))
 
     if embed:
-        embeddings_service = EmbeddingsService(
-            project_id=settings.gcp_project_id,
-            location=settings.vertex_ai_location,
-            model_name=settings.gemini_embedding_model,
-            batch_size=settings.EMBEDDING_BATCH_SIZE,
-            batch_sleep_seconds=settings.EMBEDDING_BATCH_SLEEP_SECONDS,
-        )
+        embeddings_service = EmbeddingsService(settings)
         texts = [f"{s.name}. {s.description}. {' '.join(s.attributes.values())}" for s in skus]
         vectors = await embeddings_service.embed_batch(texts)
         for sku, vector in zip(skus, vectors, strict=True):

@@ -19,25 +19,24 @@ import argparse
 import asyncio
 import sys
 
-import structlog
-
 from agents.base import AgentContext
 from agents.catalog_import import CatalogImportAgent
 from config import get_settings
+from core.exceptions import capture_exception
+from core.logging import configure_logging, get_logger
 from models.common import ImportStatus
 from services.bigquery import BigQueryService
 from services.embeddings import EmbeddingsService
 from services.firestore import FirestoreService
 from services.storage import StorageService
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 async def run_import(job_id: str) -> int:
     settings = get_settings()
-    firestore = FirestoreService(
-        project_id=settings.gcp_project_id, database=settings.firestore_database
-    )
+    configure_logging(settings)
+    firestore = FirestoreService(settings)
 
     job = await firestore.get_catalog_import_job(job_id)
     if job is None:
@@ -52,19 +51,9 @@ async def run_import(job_id: str) -> int:
     context = AgentContext(
         settings=settings,
         firestore=firestore,
-        embeddings=EmbeddingsService(
-            project_id=settings.gcp_project_id,
-            location=settings.vertex_ai_location,
-            model_name=settings.gemini_embedding_model,
-            batch_size=settings.EMBEDDING_BATCH_SIZE,
-            batch_sleep_seconds=settings.EMBEDDING_BATCH_SLEEP_SECONDS,
-        ),
-        storage=StorageService(project_id=settings.gcp_project_id, bucket_name=settings.gcs_bucket),
-        bigquery=BigQueryService(
-            project_id=settings.gcp_project_id,
-            dataset=settings.bq_dataset,
-            events_table=settings.bq_events_table,
-        ),
+        embeddings=EmbeddingsService(settings),
+        storage=StorageService(settings),
+        bigquery=BigQueryService(settings),
         store_id=job.store_id,
         claims={"uid": job.initiated_by_uid, "role": "system"},
     )
@@ -75,7 +64,7 @@ async def run_import(job_id: str) -> int:
         logger.info("catalog_import_job_complete", job_id=job_id)
         return 0
     except Exception as exc:
-        logger.error("catalog_import_job_failed", job_id=job_id, error=str(exc))
+        capture_exception(logger, exc, event="catalog_import_job_failed", job_id=job_id)
         return 1
 
 

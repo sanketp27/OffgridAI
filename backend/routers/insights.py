@@ -156,5 +156,5 @@ async def events_aggregate(
     params = {"store_id": store_id, "days": date_range_days}
     if event_type:
         params["event_type"] = event_type
-    rows = bq.query(sql, params)
+    rows = await bq.query(sql, params)
     return {"store_id": store_id, "date_range_days": date_range_days, "rows": rows}

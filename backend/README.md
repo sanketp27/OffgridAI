@@ -46,7 +46,78 @@ tests/
                                (excluded by default — see pyproject.toml)
 ```
 
-## Local setup
+## Common/core infrastructure layer (`core/`)
+
+`core/` is a shared foundation folded into this project from a separate
+infrastructure scaffold, sitting underneath `services/`:
+
+```
+core/
+  logging.py     structlog -> Cloud Logging-compatible structured JSON,
+                 with queryable (not flattened) tracebacks and
+                 request/session context binding
+  retry.py       tenacity exponential backoff + jitter for every outbound
+                 GCP/Vertex AI call, tuned via Settings, retrying only
+                 transient errors (never PermissionDenied/NotFound/bad
+                 requests, which fail immediately instead of burning the
+                 retry budget)
+  exceptions.py  typed exception hierarchy (FirestoreError, GeminiError,
+                 EmbeddingError, BigQueryError, StorageError, ...) so
+                 routers/agents catch one family instead of importing
+                 google.api_core.exceptions everywhere, plus
+                 error_boundary/capture_exception for structured
+                 traceback logging at every service call site
+```
+
+Every `services/*Service` class takes a single `Settings` instance in its
+constructor (`FirestoreService(settings)`, `EmbeddingsService(settings)`,
+etc.) rather than individual positional args, and every outbound network
+call goes through `@retry_gcp_call()`/`@retry_gemini_call()` +
+`error_boundary(...)`.
+
+## Client-freshness audit (performed during this integration)
+
+When the application layer (agents/routers/models/services) was merged
+with the common/core scaffold, every GCP/Vertex AI/FastAPI client call was
+checked against current SDK guidance. Two centralized, real issues were
+found and fixed:
+
+- **`agents/base.py`'s `GeminiClient` and `services/embeddings.py`'s
+  `EmbeddingsService`** were built on `vertexai.generative_models` /
+  `vertexai.language_models` — the generative-AI module set inside
+  `google-cloud-aiplatform` that Google deprecated on 2025-06-24 and is
+  removing. Both are rewritten against `google-genai`
+  (`services/_genai_client_factory.py`), the current unified SDK for
+  Gemini on Vertex AI or the public Developer API.
+- **`services/firestore.py`** used the positional `.where(field, op,
+  value)` form throughout, which now raises `UserWarning: Detected
+  filter using positional arguments. Prefer using the 'filter' keyword
+  argument instead.` on every call (confirmed live against
+  `google-cloud-firestore` 2.31). Replaced with `filter=FieldFilter(...)`
+  everywhere. The native vector-search path was also recomputing cosine
+  similarity in Python from the returned `embedding` field; it now reads
+  the match distance directly via `find_nearest(...,
+  distance_result_field=...)`, saving a redundant computation and keeping
+  the distance -> similarity conversion in one documented place.
+
+Two smaller, real bugs were also fixed while auditing adjacent code:
+
+- `services/bigquery.py`'s `query()` was synchronous but called without
+  `await` from an `async def` FastAPI route (`routers/insights.py`),
+  blocking the event loop for the query's duration. It's now `async`,
+  offloading the blocking SDK call via `asyncio.to_thread`.
+- `services/storage.py`'s `generate_signed_url()` only worked against a
+  local service-account key file — unmodified, it raises
+  `AttributeError: you need a private key to sign credentials` under
+  Cloud Run's metadata-server credentials (no private key). It now signs
+  via the IAM API using the runtime credentials' service-account email +
+  a refreshed access token, which works in both environments.
+
+`main.py` was also moved from FastAPI's deprecated `@app.on_event("startup")`
+to the `lifespan` context-manager pattern while it was being updated for
+the new settings-driven service constructors.
+
+
 
 ```bash
 python3.12 -m venv .venv && source .venv/bin/activate

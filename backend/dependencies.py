@@ -51,7 +51,16 @@ async def verify_token(
     from firebase_admin import auth as firebase_auth
 
     if not firebase_admin._apps:  # lazy singleton init
-        firebase_admin.initialize_app()
+        settings = get_settings()
+        # On Cloud Run, ADC (the metadata-server service account) is
+        # sufficient and `firebase_credentials_path` should be left unset.
+        # Set it for local/staging dev environments that don't have GCP
+        # ADC configured but do have a downloaded service-account key.
+        if settings.firebase_credentials_path:
+            cred = firebase_admin.credentials.Certificate(settings.firebase_credentials_path)
+            firebase_admin.initialize_app(cred, {"projectId": settings.firebase_project_id})
+        else:
+            firebase_admin.initialize_app()
 
     try:
         decoded = firebase_auth.verify_id_token(credentials.credentials)

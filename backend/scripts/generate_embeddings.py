@@ -16,23 +16,19 @@ import argparse
 import asyncio
 
 from config import get_settings
+from core.logging import configure_logging
 from services.embeddings import EmbeddingsService
 from services.firestore import FirestoreService
 
 
 async def generate(force: bool) -> None:
     settings = get_settings()
-    db = FirestoreService(project_id=settings.gcp_project_id, database=settings.firestore_database)
-    embeddings_service = EmbeddingsService(
-        project_id=settings.gcp_project_id,
-        location=settings.vertex_ai_location,
-        model_name=settings.gemini_embedding_model,
-        batch_size=settings.EMBEDDING_BATCH_SIZE,
-        batch_sleep_seconds=settings.EMBEDDING_BATCH_SLEEP_SECONDS,
-    )
+    configure_logging(settings)
+    db = FirestoreService(settings)
+    embeddings_service = EmbeddingsService(settings)
 
     skus = []
-    async for doc in db.client.collection(FirestoreService.CATALOG).stream():
+    async for doc in db.client.collection(db.CATALOG).stream():
         from models.sku import SKU
 
         sku = SKU.model_validate(doc.to_dict())

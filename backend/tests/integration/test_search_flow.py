@@ -38,10 +38,10 @@ async def test_search_against_seeded_catalog_returns_ranked_results() -> None:
     settings = get_settings()
     context = AgentContext(
         settings=settings,
-        firestore=FirestoreService(settings.gcp_project_id, settings.firestore_database),
-        embeddings=EmbeddingsService(settings.gcp_project_id, settings.vertex_ai_location),
-        storage=StorageService(settings.gcp_project_id, settings.gcs_bucket),
-        bigquery=BigQueryService(settings.gcp_project_id, settings.bq_dataset),
+        firestore=FirestoreService(settings),
+        embeddings=EmbeddingsService(settings),
+        storage=StorageService(settings),
+        bigquery=BigQueryService(settings),
         store_id="store_001",
     )
     session = Session(session_id="test-session", platform="web_widget", store_id="store_001")

@@ -14,8 +14,20 @@ dependencies = [
     # Agent orchestration
     "google-adk>=0.1.0",             # Google Agent Development Kit
 
+    # Gemini (chat + embeddings), Vertex AI mode or Gemini Developer API
+    # mode — see services/_genai_client_factory.py. This replaced
+    # `vertexai.generative_models` / `vertexai.language_models`, which
+    # Google deprecated 2025-06-24 and is removing.
+    "google-genai>=1.15",
+
     # Google Cloud SDKs
-    "google-cloud-firestore>=2.16.0",
+    # `>=2.19` because `find_nearest(..., distance_result_field=...)` and
+    # the `filter=FieldFilter(...)` keyword form of `.where()` are used
+    # throughout services/firestore.py.
+    "google-cloud-firestore>=2.19.0",
+    # No longer used for generative calls (see google-genai above); kept
+    # for google-adk's own transitive needs and as the SDK the optional
+    # Vertex AI Vector Search stretch backend would use.
     "google-cloud-aiplatform>=1.60.0",
     "google-cloud-storage>=2.17.0",
     "google-cloud-bigquery>=3.25.0",

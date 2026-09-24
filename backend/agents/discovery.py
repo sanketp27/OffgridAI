@@ -235,7 +235,7 @@ class IntentDiscoveryAgent(Agent):
         if query_text:
             contents.append(query_text)
         if image_bytes:
-            contents.append(image_bytes)  # production: wrap via Part.from_data(...)
+            contents.append(image_bytes)  # production: wrap via genai.types.Part.from_bytes(...)
 
         response = await self.gemini.generate(
             model_name=self.model,
@@ -251,7 +251,7 @@ class IntentDiscoveryAgent(Agent):
         response = await self.gemini.generate(
             model_name=self.model,
             system_prompt=VOICE_INTENT_PROMPT,
-            contents=[audio_bytes],  # production: Part.from_data(audio_bytes, mime_type=...)
+            contents=[audio_bytes],  # production: genai.types.Part.from_bytes(data=audio_bytes, ...)
         )
         parsed = self._parse_voice_response(response)
         return parsed["intent"], parsed.get("detected_language", "und"), parsed["transcription"]

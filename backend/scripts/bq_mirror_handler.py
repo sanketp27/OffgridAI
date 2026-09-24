@@ -10,13 +10,13 @@ from __future__ import annotations
 
 from typing import Any
 
-import structlog
-
 from config import get_settings
+from core.exceptions import capture_exception
+from core.logging import configure_logging, get_logger
 from models.event import Event
 from services.bigquery import BigQueryService
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 _bigquery_service: BigQueryService | None = None
 
@@ -28,11 +28,8 @@ def _get_bigquery_service() -> BigQueryService:
     global _bigquery_service
     if _bigquery_service is None:
         settings = get_settings()
-        _bigquery_service = BigQueryService(
-            project_id=settings.gcp_project_id,
-            dataset=settings.bq_dataset,
-            events_table=settings.bq_events_table,
-        )
+        configure_logging(settings)
+        _bigquery_service = BigQueryService(settings)
     return _bigquery_service
 
 
@@ -51,7 +48,7 @@ def handler(cloud_event: Any) -> None:
     try:
         event = Event.model_validate(document_data)
     except Exception as exc:
-        logger.error("bq_mirror_invalid_event_document", error=str(exc), data=document_data)
+        capture_exception(logger, exc, event="bq_mirror_invalid_event_document", data=document_data)
         return
 
     bq = _get_bigquery_service()
