@@ -6,6 +6,11 @@ Render with any Mermaid-compatible viewer (GitHub, GitLab, Obsidian, mermaid.liv
 
 ## 1. The Rescue Loop (Core Flywheel)
 
+- **Problem Statement:** Disconnected retail workflows lose shoppers at every friction point ($300B search dropouts, $890B wrong-fit returns, $1.7T inventory distortion), discarding session telemetry as unacted dead-ends.
+- **Solution Overview:** An autonomous multi-agent flywheel connecting intent parsing, vector catalog search, real-time rescue/fit-checks, and merchant insight generation to continuously convert journey friction into operational intelligence.
+- **Data Requirements:** Product catalog embeddings (`SKU`), real-time inventory counts, customer session event stream (`EVENT`: queries, clicks, fit responses, rescue decisions), BigQuery telemetry mirror.
+- **Technical Requirements:** Google ADK multi-agent orchestrator, Gemini 2.x Flash (intent/rescue) + Gemini 2.x Pro (insights), Firestore (low-latency event store & vector indexing), Cloud Run, Cloud Functions/Cloud Scheduler.
+
 ```mermaid
 flowchart TD
 
@@ -89,6 +94,11 @@ flowchart TD
 
 ## 2. Scenario 1 — Smart Discovery Flow
 
+- **Problem Statement:** Keyword mismatch, slang, and vague natural language or image searches yield zero results or poor matches ($300B zero-result search problem), driving shoppers to abandon.
+- **Solution Overview:** Multimodal intent extraction (Gemini Flash) paired with vector catalog embeddings delivers ranked results with grounded rationales and triggers targeted pre-purchase fit questions on return-prone categories.
+- **Data Requirements:** SKU metadata (title, category, attributes, price, stock, return rate), query payloads (raw text query, image bytes/URI, or audio stream), pre-indexed vector embeddings (768d/1536d).
+- **Technical Requirements:** Gemini 2.x Flash (intent normalization & attribute extraction), Firestore Vector Search (cosine similarity, score threshold ≥ 0.75), Cloud Run REST API (`POST /api/search`), JS embed widget.
+
 ```mermaid
 flowchart LR
 
@@ -137,6 +147,11 @@ flowchart LR
 
 ## 3. Scenario 2 — Stockout Rescue Flow
 
+- **Problem Statement:** When a high-intent shopper requests an out-of-stock SKU, commerce platforms display a dead-end "Out of Stock" notice, immediately forfeiting the sale and ignoring latent customer demand.
+- **Solution Overview:** Immediate rescue mode identifying semantically equivalent in-stock substitutes and regional store inventory, presenting plain-language trade-offs to retain the sale and capturing unmet-demand telemetry.
+- **Data Requirements:** Store-level inventory availability (`store_availability` JSON with store IDs & quantities), SKU category substitution relationships, delivery radius / customer geolocation, fulfillment turnaround times.
+- **Technical Requirements:** Firestore real-time inventory queries, deterministic in-stock substitute ranking algorithm, Gemini 2.x Flash (grounded trade-off explanation generation), transactional cart swap API, event telemetry logger (`substitute_accepted`/`rescue_declined`/`stockout_lost`).
+
 ```mermaid
 flowchart TD
 
@@ -183,6 +198,11 @@ flowchart TD
 ---
 
 ## 4. Scenario 3 — Return-to-Value Flow
+
+- **Problem Statement:** Returns are treated as costly write-downs ($890B problem) handled with inconsistent manual inspection, blind acceptances, and undetected fraud/counterfeit abuse.
+- **Solution Overview:** Associate PWA captures return photos for Gemini Flash Vision inspection (condition, wear, counterfeits, fraud indicators) and routes through deterministic rules to maximize recovered value (Restock, Refurbish, Liquidate, Hold).
+- **Data Requirements:** Return product photos (JPEG/PNG), customer order records (`order_id`, purchase date, price paid), buyer return frequency history, business disposition rules table (markdown matrix, refurbishment cost cutoffs).
+- **Technical Requirements:** Store Associate PWA (Firebase Hosting), Cloud Storage (secure upload bucket), Gemini 2.x Flash Vision (damage assessment, tag verification, fraud/counterfeit visual indicators), deterministic Python disposition engine (no LLM hallucinations for business logic), Firestore & BigQuery sync.
 
 ```mermaid
 flowchart TD
@@ -251,6 +271,11 @@ flowchart TD
 
 ## 5. Insight Agent Pipeline Flow
 
+- **Problem Statement:** Retail event logs, dead-end search queries, and stockout signals sit unused in raw databases without informing catalog, stock, or merchandising decisions.
+- **Solution Overview:** Batch or on-demand pipeline aggregating friction telemetry, semantically clustering unmet demand with Gemini Pro, deterministically calculating revenue-at-risk in code, and generating actionable merchant briefs.
+- **Data Requirements:** 7-day rolling window of raw `EVENT` logs (unmet search queries, stockout losses, fit-check flips), catalog SKU details, historical conversion rates (CVR), average order values (AOV).
+- **Technical Requirements:** Cloud Scheduler (nightly trigger) or manual API invocation, Gemini 2.x Pro (semantic clustering of queries by intent, prose generation), deterministic Python scoring algorithms (`revenue_at_risk = occurrences × CVR × AOV`), Firestore `insights` collection, Merchant Dashboard onSnapshot listener.
+
 ```mermaid
 flowchart LR
 
@@ -302,6 +327,11 @@ flowchart LR
 ---
 
 ## 6. Cross-Platform Integration Flow
+
+- **Problem Statement:** Fragmented tech stacks (Shopify, WooCommerce, custom frontends, physical POS, messaging) prevent retailers from deploying unified AI capabilities without expensive platform rewrites.
+- **Solution Overview:** Universal Cloud Run REST API and standardized event schema enabling lightweight script embeds, mobile SDKs, store associate PWAs, and messaging webhooks to connect to a shared agent mesh.
+- **Data Requirements:** Universal JSON event payload (`session_id`, `platform`, `type`, `sku_id`, `cart`, `timestamp`), tenant configuration IDs, API auth bearer tokens, webhook payloads from external gateways.
+- **Technical Requirements:** Cloud Run containerized service, Firebase Hosting & CDN, Firebase Auth (role management for shoppers, associates, and merchants), Webhook ingress endpoints, Google Agent Development Kit (ADK) router.
 
 ```mermaid
 flowchart TB
@@ -355,6 +385,11 @@ flowchart TB
 ---
 
 ## 7. Mesh Architecture Extension & Gaps Plugged
+
+- **Problem Statement:** Monolithic AI chatbots fail to coordinate complex multi-step retail tasks across discovery, inventory forecasting, fraud mitigation, and deep analytics.
+- **Solution Overview:** Modular ADK agent architecture where core specialist agents seamlessly extend into conversational shopping tools, a dedicated Demand Planning Agent, and a Checkout Fraud Agent.
+- **Data Requirements:** Inter-agent communication bus carrying shared session context (`session.intent_history`, current cart state, device IDs), catalog and insight collection feeds.
+- **Technical Requirements:** Google Agent Development Kit (ADK) multi-agent orchestrator, pub/sub or event-driven agent routing, isolated microservices on Cloud Run, shared Firestore session cache.
 
 ```mermaid
 flowchart TB
@@ -432,6 +467,11 @@ Only two boxes are genuinely new agent processes (pink). Everything blue and tea
 
 ### 8a. Pre-search intelligence — guided narrowing, bundle search, reference resolution
 
+- **Problem Statement:** Vague, multi-attribute, or bundled use-case queries ("outfit for beach wedding under ₹8,000") produce fragmented search results, forcing shoppers to manually search multiple times.
+- **Solution Overview:** Multi-turn intent extraction resolving conversational references, asking at most one targeted clarifying question for ambiguous inputs, and decomposing use-cases into budget-apportioned sub-queries.
+- **Data Requirements:** Multi-turn session intent history (`session.intent_history`), catalog vector embeddings per sub-need category, user max budget parameter.
+- **Technical Requirements:** Gemini 2.x Flash (intent extraction, pronoun reference resolution, use-case decomposition), Python budget allocator (`budget_share × total`), parallel Firestore vector searches per sub-need, Python arithmetic bundle total calculator.
+
 ```mermaid
 flowchart LR
     A1(["Shopper types or speaks a query"]) --> B1["extract_structured_intent\nGemini Flash"]
@@ -461,6 +501,11 @@ flowchart LR
 **Key conditions:** clarifying question only fires on short + ambiguous queries (never adds a turn to an already-specific query) · bundle total is always the Python sum, never a number Gemini states · a sub-need with no match is shown as a gap, never silently dropped.
 
 ### 8b. Cart concierge — checkout-time policy Q&A
+
+- **Problem Statement:** Shoppers abandon carts right before checkout due to uncertainty regarding sizing, warranty, shipping timelines, or store return policies.
+- **Solution Overview:** In-cart conversational tool dynamically querying verified SKU details and store policy documents, answering strictly from grounded facts without making unsupported claims.
+- **Data Requirements:** Current cart SKU items & attributes, static store policies collection document (`store_policies/{store_id}`: return window, shipping rates, warranties), shopper message string.
+- **Technical Requirements:** Cloud Run endpoint (`POST /cart/ask`), Gemini 2.x Flash function calling (`get_sku_details`, `get_store_policy`), grounding verification guardrail (honest fallbacks for ungrounded queries).
 
 ```mermaid
 flowchart TD
@@ -492,6 +537,11 @@ flowchart TD
 
 ### 9a. Search-signal-to-forecast bridge
 
+- **Problem Statement:** Retail forecasting relies solely on historical completed sales, remaining completely unaware of unmet demand and customer searches that ended in stockout dropouts.
+- **Solution Overview:** Nightly pipeline aggregating unmet demand signals and sales into BigQuery ML `ARIMA_PLUS` models, outputting confidence-interval demand forecasts and grounded narrative summaries.
+- **Data Requirements:** Historical sales transaction units from BigQuery mirror, unmet demand signals from Firestore `insights` (occurrences & trend_pct per SKU), minimum history threshold data.
+- **Technical Requirements:** Cloud Scheduler cron job, BigQuery ML (`CREATE MODEL ... ARIMA_PLUS`), `ML.FORECAST` table generator, Python parser creating Firestore `DemandForecast` docs, Gemini 2.x Pro (narrating forecast data points).
+
 ```mermaid
 flowchart LR
     A3["Cloud Scheduler\nnightly trigger"] --> B3["Read insights collection\nstock_gap / discoverability_gap\nclusters, last N days"]
@@ -516,6 +566,11 @@ flowchart LR
 **Key conditions:** LLM narrative never states a number absent from `forecast_points` · demand signal boost is always traceable to specific `insights` documents.
 
 ### 9b. Forecast-driven actions
+
+- **Problem Statement:** Merchants face manual reorder delays during unexpected demand surges, or execute arbitrary price discounts without knowing margin and volume impacts.
+- **Solution Overview:** Automated reorder drafts calculated from lead-times and safety factors (awaiting human confirmation) alongside what-if price elasticity simulators grounded in SKU forecasts.
+- **Data Requirements:** Supplier lead times, safety stock factor coefficients, category price elasticity constants, SKU unit cost and margins, forecast points collection.
+- **Technical Requirements:** Deterministic Python purchase order calculation (`suggested_quantity = daily_rate × lead_time × safety_factor`), Firestore `reorder_drafts` document manager (`confirmed: false`), Gemini function calling for `simulate_price_change`.
 
 ```mermaid
 flowchart TD
@@ -551,6 +606,11 @@ flowchart TD
 ## 10. Fraud Detection & Risk Scoring
 
 ### 10a. Checkout risk scoring (synchronous)
+
+- **Problem Statement:** Opaque fraud mechanisms cause false-positive checkout blocks or miss rapid multi-session device abuse at payment time.
+- **Solution Overview:** Deterministic, reproducible scoring evaluating device velocity and basket deviation directly against Firestore, triggering step-up verification for high-risk scores with Gemini narrating factors.
+- **Data Requirements:** Device fingerprint / `device_id`, session timestamp logs (last 1h count), shipping addresses linked to device (last 24h count), cart monetary total, historical customer AOV.
+- **Technical Requirements:** Synchronous Cloud Run checkout gate (`POST /checkout/start`), low-latency Firestore queries (<50ms budget), deterministic Python weighted rule scoring (LOW: <25, MEDIUM: 25–49, HIGH: ≥50), Gemini 2.x Flash factor narration, step-up challenge prompt.
 
 ```mermaid
 flowchart TD
@@ -588,6 +648,11 @@ flowchart TD
 
 ### 10b. Pattern-level fraud signals
 
+- **Problem Statement:** Repeat serial return abusers, promo code multi-accounting, and counterfeit supplier listings escape single-transaction checks.
+- **Solution Overview:** Asynchronous pattern analysis grouping repeat returners, detecting device/email coupon abuse, and scanning catalog images via Gemini Vision for counterfeit indicators.
+- **Data Requirements:** Historical `return_assessments` records, promo code usage logs with device IDs and normalized email alias strings, catalog supplier import image batches.
+- **Technical Requirements:** Python batch analytics grouped by customer ID, email alias pattern normalizer, Gemini 2.x Flash Vision (watermark, branding mismatch, duplicate reuse screening), Firestore `PromoAbuseFlag` & admin preview moderation workflow.
+
 ```mermaid
 flowchart TD
     subgraph RAM["Return-Abuse Pattern Mining - nightly, reuses Insight pipeline"]
@@ -621,6 +686,11 @@ flowchart TD
 ---
 
 ## 11. Deepened Insights Pipeline
+
+- **Problem Statement:** Retailers lack context on why products trend, how competitors are pricing identical items, or what cross-sell bundles actually convert.
+- **Solution Overview:** Multi-dimensional event aggregation tracking SKU co-occurrences, competitor crawl price gaps, on-demand merchant trend drilldowns, and automated weekly summary digests.
+- **Data Requirements:** Full session telemetry with platform & returning-shopper flags, SKU cart co-occurrence matrix, competitor scraped price feeds, date-partitioned event counts.
+- **Technical Requirements:** Python statistical association / co-occurrence counter, competitor web crawler / price matching logic, Gemini 2.x Pro (narrating trend shapes and compiling weekly digest briefs), BigQuery date aggregation.
 
 ```mermaid
 flowchart LR

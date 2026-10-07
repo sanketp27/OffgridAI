@@ -83,16 +83,15 @@ An **Orchestrator** (Google Agent Development Kit) routes every event to the cor
 
 ### Scenario 1 — Smart Discovery
 
-*Solves: $300B zero-result search problem*
+- **Problem Statement:** Keyword mismatch, slang, and vague natural language or image searches yield zero results or poor matches ($300B zero-result search problem), driving shoppers to abandon.
+- **Solution Overview:** Multimodal intent extraction (Gemini Flash) paired with vector catalog embeddings delivers ranked results with grounded rationales and triggers targeted pre-purchase fit questions on return-prone categories.
+- **Data Requirements:** SKU metadata (title, category, attributes, price, stock, return rate), query payloads (raw text, image bytes, audio stream), pre-indexed vector embeddings (768d/1536d).
+- **Technical Requirements:** Gemini 2.x Flash (intent extraction & normalization), Firestore Vector Search (cosine similarity, score threshold ≥ 0.75), Cloud Run REST API (`POST /api/search`), JS embed widget.
 
 1. Shopper types a vague query or uploads a photo.
-
 2. Intent Agent extracts structured intent (handles slang, synonyms, images).
-
 3. Discovery Agent performs vector search → returns ranked matches with one-line grounded reasons.
-
 4. If category is return-prone, Fit-Check Agent asks one targeted question.
-
 5. Purchase confirmed → event logged to shared schema.
 
 **Key outcome**: Zero dead ends. Every "no exact match" shows near-matches with an explanation and logs an unmet-demand signal.
@@ -101,16 +100,15 @@ An **Orchestrator** (Google Agent Development Kit) routes every event to the cor
 
 ### Scenario 2 — Stockout Rescue
 
-*Solves: #1 inventory pain point*
+- **Problem Statement:** When a high-intent shopper requests an out-of-stock SKU, commerce platforms display a dead-end "Out of Stock" notice, immediately forfeiting the sale and ignoring latent customer demand.
+- **Solution Overview:** Immediate rescue mode identifying semantically equivalent in-stock substitutes and regional store inventory, presenting plain-language trade-offs to retain the sale and capturing unmet-demand telemetry.
+- **Data Requirements:** Store-level inventory availability (`store_availability` JSON with store IDs & quantities), SKU category substitution relationships, delivery radius / customer geolocation, fulfillment turnaround times.
+- **Technical Requirements:** Firestore real-time inventory queries, deterministic in-stock substitute ranking algorithm, Gemini 2.x Flash (grounded trade-off explanation generation), transactional cart swap API, event telemetry logger (`substitute_accepted`/`rescue_declined`/`stockout_lost`).
 
 1. Shopper requests a specific SKU (e.g., "black running shoes, size 9, under ₹5,000, today").
-
 2. Discovery Agent finds the preferred SKU is out of stock at the local store.
-
 3. Rescue mode: checks substitute SKUs, nearby store availability, fulfilment timing.
-
 4. AI explains the trade-off in plain language ("this runs ₹200 more but ships same day from a nearby store").
-
 5. Customer accepts substitute → logged as `resolution: substitute_accepted`.
 
 **Key outcome**: Revenue saved instead of lost. The stockout event + resolution are signal for the Insight Agent.
@@ -119,14 +117,14 @@ An **Orchestrator** (Google Agent Development Kit) routes every event to the cor
 
 ### Scenario 3 — Return-to-Value
 
-*Solves: $890B returns problem — turns it into an asset*
+- **Problem Statement:** Returns are treated as costly write-downs ($890B problem) handled with inconsistent manual inspection, blind acceptances, and undetected fraud/counterfeit abuse.
+- **Solution Overview:** Associate PWA captures return photos for Gemini Flash Vision inspection (condition, wear, counterfeits, fraud indicators) and routes through deterministic rules to maximize recovered value (Restock, Refurbish, Liquidate, Hold).
+- **Data Requirements:** Return product photos (JPEG/PNG), customer order records (`order_id`, purchase date, price paid), buyer return frequency history, business disposition rules table (markdown matrix, refurbishment cost cutoffs).
+- **Technical Requirements:** Store Associate PWA (Firebase Hosting), Cloud Storage (secure upload bucket), Gemini 2.x Flash Vision (damage assessment, tag verification, fraud/counterfeit visual indicators), deterministic Python disposition engine (no LLM hallucinations for business logic), Firestore & BigQuery sync.
 
 1. Store associate uploads a photo of a returned item.
-
 2. Return Intelligence Agent reads the image: assesses condition (good / lightly used / damaged), matches against order history, checks for fraud signals (wardrobing, bracketing patterns, policy abuse language).
-
 3. Disposition recommendation generated: "restock" / "refurbish and relist at 15% discount" / "liquidate at 40% markdown".
-
 4. Merchant dashboard updates with recovered inventory value.
 
 **Key outcome**: Every return becomes an optimized business decision, not a blanket approve/reject.
