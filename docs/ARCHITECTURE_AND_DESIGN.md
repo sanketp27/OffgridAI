@@ -1,166 +1,171 @@
-# OffgridAI / OmniCommerce AI: System Architecture & Deep Module Design
+# OffGrid AI: System Architecture & Deep Module Design
 
 ## 1. System Vision & Alignment
-OffgridAI transforms unstructured merchant assets (PDF spec sheets, supplier portals, DOCX, XLSX, raw images) into an **Autonomous, Agentic-Ready Commerce Core** within 60 seconds.
+OffGrid AI is a platform-agnostic, embeddable intelligence layer for modern retail and commerce. It detects when a customer shopping journey or post-purchase experience is about to break down, executes real-time AI rescue, and feeds operational telemetry back into merchant inventory and demand planning.
 
-Beyond legacy PIM parsers, the system executes an end-to-end activation loop:
-`Unstructured Raw Sources` → `Multimodal Extraction` → `Omnichannel Asset Synthesis` → `Semantic Agentic Graph` → `Instant Conversational Storefront`.
+The architecture connects five specialized agents across a closed-loop flywheel:
+`Customer Intent / Session Telemetry` → `Conversational Discovery & Fit-Check` → `Stockout Rescue & Substitution` → `Multimodal Return Intelligence` → `Merchant Demand Insights`.
 
 ---
 
 ## 2. Core Design Principles (Deep Modules)
-Adhering to strict `codebase-design` tenets:
-* **Deep Modules over Shallow Wrappers**: Complex multimodal pipelines, LLM retries, taxonomy matching, and embeddings hidden behind compact, unambiguous interfaces.
-* **The Seam Discipline**: External dependencies (Gemini API, Document Extractors, Cloud Storage, Database) are accessed through swappable adapters across explicit seams.
-* **The Deletion Test**: Deleting an adapter isolates 3rd-party volatility; deleting an engine module forces massive behavioral complexity to resurface at callers.
-* **Accept Dependencies, Return Results**: Pure data-in, data-out contracts without hidden global state or side effects, guaranteeing zero-friction testability.
+Adhering to strict `codebase-design` principles:
+* **Deep Modules over Shallow Wrappers**: Complex multimodal processing, multi-criteria vector retrieval, substitute scoring, and telemetry clustering are hidden behind small, well-defined module contracts.
+* **The Seam Discipline**: External systems (Google Gemini API, Firestore, Cloud Storage, BigQuery) connect via explicit seams and swappable adapters.
+* **The Deletion Test**: Swapping or deleting an adapter changes an external dependency; deleting a core engine module would force massive business and agentic logic to resurface at callers.
+* **Accept Dependencies, Return Results**: Pure data-in, data-out contracts with no hidden state or global side-effects, guaranteeing straightforward unit and regression testing.
+* **Anti-Hallucination Invariants**: Product suggestions must cite concrete catalog SKU IDs; insight metrics must be computed deterministically in code before being phrased by LLMs.
 
 ---
 
 ## 3. High-Level Architecture & Seam Map
 
 ```
-  ┌────────────────────────────────────────────────────────┐
-  │                    HTTP / CLI Caller                   │
-  └───────────────────────────┬────────────────────────────┘
-                              │
-                      [Public API Seam]
-                              ▼
-  ┌────────────────────────────────────────────────────────┐
-  │ 1. IngestionModule                                     │
-  │    (Interface: ingest_catalog_source)                  │
-  │    - Sniffs content bytes                              │
-  │    - Dispatches to format-specific extractors          │
-  │    - Emits unified RawExtraction payload               │
-  └───────────────────────────┬────────────────────────────┘
-                              │
-                     [Raw Extraction Seam]
-                              ▼
-  ┌────────────────────────────────────────────────────────┐
-  │ 2. StructuringAndEnrichmentModule                      │
-  │    (Interface: structure_and_enrich)                   │
-  │    - Gemini Flash Multimodal structuring               │
-  │    - Business validation & content hashing             │
-  │    - Omnichannel Asset Generation (Amazon, SEO, TikTok)│
-  └─────────────┬────────────────────────────┬─────────────┘
-                │                            │
-      [Catalog Storage Seam]       [Graph Synthesis Seam]
-                ▼                            ▼
-  ┌───────────────────────────┐┌───────────────────────────┐
-  │ StoreAdapter              ││ 3. AgenticGraphModule     │
-  │ (Firestore / InMemory)    ││    (build_commerce_graph) │
-  └───────────────────────────┘│    - Vector embeddings    │
-                               │    - Bundle & compatibility│
-                               │    - Semantic graph index │
-                               └─────────────┬─────────────┘
-                                             │
-                                    [Storefront Agent Seam]
-                                             ▼
-                               ┌───────────────────────────┐
-                               │ 4. ActivationStorefront   │
-                               │    (query_commerce_agent) │
-                               │    - Conversational Search│
-                               │    - Autonomous Cart Tool │
-                               └───────────────────────────┘
+   ┌───────────────────────┐ ┌───────────────────────┐ ┌───────────────────────┐
+   │    Shopper Widget     │ │     Associate PWA     │ │   Merchant Dashboard  │
+   │  (JS Embed / Mobile)  │ │   (Return Inspection) │ │   (Demand Telemetry)  │
+   └───────────┬───────────┘ └───────────┬───────────┘ └───────────┬───────────┘
+               │                         │                         │
+               └─────────────────────────┼─────────────────────────┘
+                                         ▼
+                                 [Public REST API Seam]
+                                         │
+        ┌────────────────────────────────┼────────────────────────────────┐
+        ▼                                ▼                                ▼
+┌─────────────────────────┐  ┌─────────────────────────┐  ┌─────────────────────────┐
+│ 1. Intent & Discovery   │  │ 2. Stockout Rescue      │  │ 3. Return Intelligence  │
+│    Module               │  │    Module               │  │    Module               │
+│ - Intent parsing        │  │ - Local inventory check │  │ - Gemini Vision audit   │
+│ - Semantic search       │  │ - Trade-off explanation │  │ - Fraud detection       │
+│ - Fit-check trigger     │  │ - Cart swap resolution  │  │ - Deterministic routing │
+└───────────┬─────────────┘  └───────────┬─────────────┘  └───────────┬─────────────┘
+            │                            │                            │
+            └────────────────────────────┼────────────────────────────┘
+                                         │
+                                [Telemetry Event Seam]
+                                         ▼
+                             ┌─────────────────────────┐
+                             │ 4. Demand Insight       │
+                             │    Module               │
+                             │ - Session clustering    │
+                             │ - Revenue-at-risk math  │
+                             │ - Grounded brief writer │
+                             └───────────┬─────────────┘
+                                         │
+                                 [Storage & Model Seams]
+                                         ▼
+  ┌─────────────────────────────────────────────────────────────────────────────┐
+  │  Catalog / Inventory Seam      Telemetry Seam            AI Model Seam      │
+  │  Firestore / InMemory          BigQuery / Firestore      Gemini Flash / Pro │
+  └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## 4. Deep Module Specifications
 
-### Module 1: IngestionModule
-* **Purpose**: Ingest any supported source format (PDF, DOCX, XLSX, Image, or Scraped URL) and produce normalized, structured text and image candidates.
+### Module 1: IntentAndDiscoveryModule
+* **Purpose**: Parse raw customer queries (text, voice, photo) into structured intent, perform vector discovery over catalog SKUs, and execute proactive fit-checks on return-prone categories.
 * **Interface**:
   ```python
-  class IngestionModule(Protocol):
-      def ingest_source(self, source: IngestionSource) -> RawExtraction:
+  class IntentAndDiscoveryModule(Protocol):
+      def search(self, session: SessionContext, query: CustomerQuery) -> DiscoveryResult:
           """
-          Takes raw binary bytes or URL source.
-          Returns unified raw text blocks, extracted candidate image binaries,
-          and metadata coordinates without leaking extraction internals.
+          Extracts structured attributes, searches catalog vectors, and returns
+          ranked SKUs with grounded match reasons.
+          """
+          ...
+
+      def evaluate_fit(self, sku_id: str, shopper_profile: ShopperProfile) -> FitCheckPrompt | None:
+          """
+          Evaluates if SKU is return-prone and returns a single targeted clarifying
+          question if sizing or compatibility ambiguity exists.
           """
           ...
   ```
-* **Depth & Hiding**:
-  * Hides: PyMuPDF bounding-box xref parsing, openpyxl cell-anchored image geometry, docx media order resolution, web scraping DOM cleanup.
-  * Invariants: Always returns normalized UTF-8 text and deduplicated binary image candidates with source provenance.
-* **Seams & Adapters**:
-  * `ExtractorAdapter`: Concrete extractors for PDF, DOCX, XLSX, Image, URL.
-  * Test Adapter: `InMemoryExtractor` returning deterministic dummy text/images.
+* **Depth & Hiding**: Hides embedding generation, vector distance metrics, category-specific fit risk rules, and Gemini Flash dialogue prompt orchestration.
+* **Invariants**: Guarantees zero empty dead-ends; any low-confidence match falls back to near-match alternatives with plain-language explanations.
 
-### Module 2: StructuringAndEnrichmentModule
-* **Purpose**: Convert raw unstructured extraction into platform-standard SKUs and generate omnichannel syndication assets (Gap B).
+### Module 2: StockoutRescueModule
+* **Purpose**: Intercept out-of-stock SKU requests, inspect regional store inventory, rank substitute items, and synthesize actionable trade-off explanations.
 * **Interface**:
   ```python
-  class StructuringAndEnrichmentModule(Protocol):
-      def structure_and_enrich(
+  class StockoutRescueModule(Protocol):
+      def rescue_stockout(
           self,
-          raw: RawExtraction,
-          channels: list[OmnichannelTarget]
-      ) -> EnrichmentResult:
+          out_of_stock_sku: str,
+          location: CustomerLocation,
+          constraints: SubstitutionConstraints
+      ) -> RescueOffer:
           """
-          Parses SKUs via Gemini Multimodal, validates business constraints,
-          hashes content for idempotency, and synthesizes channel-tailored copy.
+          Finds in-stock substitutes or nearby store inventory and generates
+          clear trade-off comparisons (price delta, delivery timing, spec differences).
           """
           ...
   ```
-* **Depth & Hiding**:
-  * Hides: Gemini prompt choreography, JSON Schema enforcement, retry with exponential backoff, GS1 taxonomy mapping, Amazon A+ bullet formatting, TikTok marketing hook generation.
-  * Invariants: Every product has a valid title, normalized price, category, content hash, and high-confidence image binding. Products failing hard schema validation are flagged with precise diagnostic codes.
-* **Seams & Adapters**:
-  * `GeminiModelAdapter`: Live Google GenAI API client vs `MockGeminiAdapter` returning golden fixtures.
-  * `StorageAdapter`: GCS bucket for candidate images vs local file storage.
+* **Depth & Hiding**: Hides regional store radius queries, inventory reconciliation, substitute compatibility scoring, and customer-facing trade-off copy synthesis.
+* **Invariants**: Never recommends out-of-stock substitutes; trade-offs are grounded in verified stock data.
 
-### Module 3: AgenticGraphModule
-* **Purpose**: Transform flat product catalogs into an interconnected Semantic Knowledge Graph for agentic reasoning (Gap A).
+### Module 3: ReturnIntelligenceModule
+* **Purpose**: Inspect returned items using multimodal vision, evaluate condition and fraud indicators, and assign deterministic disposition routing.
 * **Interface**:
   ```python
-  class AgenticGraphModule(Protocol):
-      def index_catalog(self, catalog: EnrichedCatalog) -> GraphIndexSummary:
-          """
-          Generates dense vector embeddings and infers cross-product
-          relationships (compatibility, bundles, substitutes, target personas).
-          """
-          ...
-
-      def find_semantic_solutions(
+  class ReturnIntelligenceModule(Protocol):
+      def inspect_return(
           self,
-          intent: CustomerIntent,
-          constraints: SearchConstraints
-      ) -> list[SolutionBundle]:
+          item_image: ImagePayload,
+          order_record: OrderRecord
+      ) -> DispositionDecision:
           """
-          Resolves multi-criteria queries with reasoning over graph edges.
+          Evaluates item condition, detects anomalies/fraud signals, and returns
+          disposition recommendation (Restock, Refurbish, Liquidate, Hold).
           """
           ...
   ```
-* **Depth & Hiding**:
-  * Hides: `text-embedding-004` batch calls, vector distance search, graph relationship reasoning, bundle pricing calculation.
-  * Invariants: All graph edges maintain strict directional semantic types (`COMPATIBLE_WITH`, `UPGRADE_OF`, `BUNDLE_ACCESSORY`).
+* **Depth & Hiding**: Hides Gemini Flash Vision prompt templates, damage classification heuristics, policy abuse risk scoring, and depreciation calculations.
+* **Invariants**: Business routing (refund approval thresholds and markdown levels) is executed in deterministic code, never hallucinated by the LLM.
 
-### Module 4: ActivationStorefrontModule
-* **Purpose**: Zero-Day customer-facing conversational shopping interface driven by the onboarded catalog and graph.
+### Module 4: DemandInsightModule
+* **Purpose**: Aggregate closed-loop session telemetry, identify unmet customer demand, compute revenue at risk, and generate actionable briefs for merchants.
 * **Interface**:
   ```python
-  class ActivationStorefrontModule(Protocol):
-      def chat(self, session: StorefrontSession, input_message: str) -> AgentTurnResponse:
+  class DemandInsightModule(Protocol):
+      def generate_insights(
+          self,
+          time_window: TimeRange,
+          filter_criteria: InsightFilter
+      ) -> list[DemandInsightBrief]:
           """
-          Autonomous shopping conversational loop with tool-calling
-          for catalog search, product inspection, and cart updates.
+          Clusters failed search sessions, calculates revenue-at-risk figures,
+          and writes grounded merchant action recommendations.
           """
           ...
   ```
-* **Depth & Hiding**:
-  * Hides: Conversation memory management, tool execution (cart manipulation, spec comparison), multimodal audio/voice parsing.
+* **Depth & Hiding**: Hides semantic clustering of search queries, statistical revenue-at-risk aggregation, and Gemini Pro grounded brief generation.
+* **Invariants**: All revenue figures and search counts are computed in Python code; the LLM is restricted to narrative explanation of pre-calculated metrics.
 
 ---
 
-## 5. Persistence & Cloud Seams
-* **Store Seam**:
-  * `CatalogRepository`: Protocol with `upsert_products(list[Product]) -> UpsertReport` and `get_product(sku: str) -> Product`.
-  * Production Adapter: Firestore / Cloud SQL.
-  * Test Adapter: `InMemoryCatalogRepository`.
-* **Deployment Topology (GCP)**:
-  * Application runs on **Google Cloud Run** (stateless container).
-  * Storage: **Google Cloud Storage** for source assets/images.
-  * Database: **Cloud Firestore** for catalog state & graph relations.
-  * AI Layer: **Gemini 2.0 / 1.5 Flash + text-embedding-004** via `google-genai` SDK.
+## 5. Persistence & External Seams
+
+* **Catalog & Inventory Seam**:
+  * `ProductCatalogRepository`: Fetch product metadata and vector embeddings.
+  * `InventoryRepository`: Query store-level stock status and delivery timeframes.
+  * Test Adapters: `InMemoryCatalogRepository`, `InMemoryInventoryRepository`.
+* **Telemetry Seam**:
+  * `TelemetryLogger`: Logs session outcomes (`search_completed`, `stockout_rescued`, `fit_adjusted`, `unmet_demand_lost`).
+  * Adapters: Cloud Firestore (live sync), BigQuery (batch analytical queries), InMemory (testing).
+* **AI Model Seam**:
+  * `GeminiModelAdapter`: Live `google-genai` client for Gemini 2.x/1.5 Flash (real-time turns) and Gemini Pro (insight generation) with exponential backoff.
+  * Test Adapter: `MockGeminiModelAdapter` returning deterministic test fixtures.
+
+---
+
+## 6. GCP Deployment Topology
+* **Compute**: Google Cloud Run (stateless container running the FastAPI service).
+* **Frontends**: Firebase Hosting (Shopper Embed demo, Store Associate PWA, Merchant Dashboard).
+* **Data & Storage**:
+  * Cloud Firestore: Real-time inventory status, active sessions, product catalog.
+  * Cloud Storage: Return inspection photos and media assets.
+  * BigQuery: Long-term intent logs and demand telemetry.
+* **AI & Orchestration**: Google GenAI SDK / Vertex AI Gemini Flash and Gemini Pro.

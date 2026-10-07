@@ -1,90 +1,100 @@
-# OffgridAI: Hackathon Implementation & Execution Plan
+# OffGrid AI: Hackathon Implementation & Execution Plan
 
 ## 1. Project Overview & Deadlines
 * **Target Event**: AI Builder Cup 2026 (Theme: Retail & Commerce)
-* **Submission Deadline**: October 18, 2026 (11-day build window)
+* **Submission Deadline**: October 18, 2026
 * **Required Deliverables**:
   1. Live Working Prototype deployed on GCP (Cloud Run / Firebase)
-  2. Public GitHub Repository with clean documentation and tests
-  3. Video Demo under 3 minutes
-  4. Pitch Deck explaining problem alignment, architecture, and business impact
+  2. Public GitHub Repository with clean architecture, tests, and documentation
+  3. Video Demo under 3 minutes demonstrating the closed-loop rescue flows
+  4. Pitch Deck detailing problem alignment, architecture, and retail impact
 
 ---
 
 ## 2. Sprint Timeline & Work Packages
 
 ```
-   Days 1-3          Days 4-5          Days 6-8          Days 9-10          Day 11
+   Days 1-3          Days 4-5          Days 6-7          Days 8-9          Days 10-11
 ┌─────────────┐   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
-│ Phase 1A:   │──▶│ Phase 1B:   │──▶│ Phase 2:    │──▶│ Phase 3:    │──▶│ Phase 4:    │
-│ Ingestion & │   │ Omnichannel │   │ Agentic     │   │ Storefront  │   │ Deploy, Demo│
-│ Core Parser │   │ Enrichment  │   │ Graph Engine│   │ Demo UI     │   │ & Deck      │
+│ Phase 1:    │──▶│ Phase 2:    │──▶│ Phase 3:    │──▶│ Phase 4:    │──▶│ Phase 5:    │
+│ Seams &     │   │ Stockout    │   │ Return      │   │ Demand      │   │ Deploy, Demo│
+│ Discovery   │   │ Rescue      │   │ Intelligence│   │ Insights    │   │ & Deck      │
 └─────────────┘   └─────────────┘   └─────────────┘   └─────────────┘   └─────────────┘
 ```
 
-### Phase 1A: Core Ingestion & Normalization (Days 1–3) [Priority 1]
-* **Goal**: Establish deep `IngestionModule` and wire existing `catalogue_parser` assets into the clean seam architecture.
+### Phase 1: Core Seams & Conversational Discovery (Days 1–3) [Priority 1]
+* **Goal**: Establish core deep module interfaces, seed standard product catalog data, and build conversational discovery with proactive fit checks.
 * **Tasks**:
-  * Unpack and reorganize `docs/catalogue_parser.zip` into `src/offgrid/`.
-  * Establish `IngestionSource` abstraction (PDF, DOCX, XLSX, Images, URL scraper).
-  * Formalize `RawExtraction` Pydantic models.
-  * Integrate `google-genai` SDK for Gemini Flash structured SKU extraction.
-  * Implement `validate_batch()` with content hashing for idempotent deduplication.
+  * Set up `src/offgrid/` modular package layout with strict typing and Pydantic models.
+  * Seed product catalog fixtures with standard attributes (clothing, footwear, electronics).
+  * Implement `IntentAndDiscoveryModule`:
+    * Multimodal query parsing with Gemini Flash.
+    * Vector similarity retrieval using `text-embedding-004`.
+    * Grounded response generation citing exact SKU IDs.
+  * Implement `evaluate_fit()`: Sizing clarification question for high-return categories.
 * **Testing**:
-  * Unit tests against fixture files (`sample_catalogue.pdf`, `.xlsx`, `.docx`).
-  * Verify 100% extraction accuracy on SKU titles, specs, prices, and image binds.
+  * Unit tests against `InMemoryCatalogRepository` and `MockGeminiModelAdapter`.
+  * Validate anti-hallucination guarantee: Zero responses containing hallucinated SKUs.
 
-### Phase 1B: Omnichannel Enrichment Engine (Days 4–5) [Priority 1 + Gap B]
-* **Goal**: Upgrade parser into an autonomous merchant enablement tool.
+### Phase 2: Real-Time Stockout Rescue Engine (Days 4–5) [Priority 1]
+* **Goal**: Enable automated detection of out-of-stock items, regional store inventory lookup, and trade-off substitution.
 * **Tasks**:
-  * Build `OmnichannelEnricher` module behind `StructuringAndEnrichmentModule`.
-  * Implement channel prompt transforms:
-    * **Amazon A+ Content**: Bullet points, technical specifications, compliance disclosures.
-    * **Shopify / Web SEO**: Meta title, meta description, alt tags, schema.org JSON-LD.
-    * **Social / TikTok Shop**: Engaging short hooks, target audience tags, key USPs.
-  * Implement taxonomy classifier: Map raw categories to GS1 / Google Product Taxonomy standard.
+  * Implement `StockoutRescueModule`:
+    * Multi-store inventory availability queries.
+    * Substitute ranking algorithm based on category attributes and price proximity.
+    * Gemini Flash trade-off synthesis (price, shipping timing, color/size variance).
+  * Build telemetry event emitter for session outcomes (`substitute_accepted`, `rescue_declined`, `stockout_lost`).
 * **Testing**:
-  * Test omnichannel output generation with mock Gemini adapter and live Gemini 2.0 Flash.
+  * Test stockout rescue scenarios with mock multi-store inventory.
+  * Validate trade-off prompt grounding with deterministic fixtures.
 
-### Phase 2: Semantic Agentic Graph (Days 6–8) [Priority 2 + Gap A]
-* **Goal**: Transform flat catalog records into an interconnected knowledge graph for M2M agent reasoning.
+### Phase 3: Multimodal Return Intelligence (Days 6–7) [Priority 2]
+* **Goal**: Deploy vision-based return inspection and deterministic disposition routing.
 * **Tasks**:
-  * Integrate `text-embedding-004` to create vector embeddings for all enriched SKUs.
-  * Build relationship inference pipeline:
-    * Cross-product compatibility (e.g., lens fits camera body).
-    * Bundle recommendations & accessories.
-    * Customer persona & intent tags.
-  * Implement `AgenticGraphModule` interface with `find_semantic_solutions()` query method.
+  * Implement `ReturnIntelligenceModule`:
+    * Gemini Flash Vision integration for condition grading (wear, damage, missing tags).
+    * Heuristic fraud detection (wardrobing indicators, serial number mismatch).
+    * Deterministic disposition engine (Restock, Refurbish at markdown, Liquidate, Hold).
+  * Build lightweight Associate PWA (Firebase Hosting) for mobile photo capture and routing verdicts.
 * **Testing**:
-  * Test semantic retrieval on multi-criteria prompts ("bundle for beginner vlogger under $500").
+  * Unit tests with sample return photo fixtures across all 4 disposition states.
+  * Verify disposition decisions are 100% code-driven without LLM business logic hallucination.
 
-### Phase 3: Instant Storefront Demo Interface (Days 9–10) [Stretch / Priority 3]
-* **Goal**: Interactive visual UI demonstrating the zero-to-live merchant activation journey.
+### Phase 4: Closed-Loop Demand Insights & Merchant Dashboard (Days 8–9) [Priority 2]
+* **Goal**: Turn session logs and unmet demand telemetry into actionable merchant briefs.
 * **Tasks**:
-  * Build lightweight FastAPI / Streamlit / Next.js web application:
-    * **Merchant View**: Drag-and-drop catalog upload (PDF/XLSX/URL) → live progress stream → inspected SKU table & omnichannel previews.
-    * **Shopper View (Zero-Day Storefront)**: Real-time interactive search querying the newly onboarded graph, showcasing AI recommendations and cart assembly.
+  * Implement `DemandInsightModule`:
+    * Clustering algorithm for failed searches and unmet intent queries.
+    * Deterministic revenue-at-risk formula calculations.
+    * Gemini Pro grounded brief generation.
+  * Build Merchant Dashboard view:
+    * High-level metrics: revenue saved via rescue, returns mitigated, unmet demand lost.
+    * "Generate Insights" trigger producing structured merchant briefs.
 * **Testing**:
-  * Full end-to-end loop: Upload PDF on Merchant side → instantly query on Shopper side.
+  * Test insight generation against simulated session logs.
+  * Verify all revenue numbers in generated briefs strictly match code calculation outputs.
 
-### Phase 4: Cloud Run Deployment, Video & Pitch (Day 11)
-* **Goal**: Finalize submission package and guarantee zero downtime during judging.
+### Phase 5: Cloud Run Deployment, Video & Pitch (Days 10–11)
+* **Goal**: Deploy working prototype on Google Cloud Run and finalize competition materials.
 * **Tasks**:
-  * Containerize application (`Dockerfile`) optimized for Google Cloud Run.
-  * Deploy to Cloud Run with GCP secret manager for API keys.
+  * Containerize application (`Dockerfile`) and deploy API to Google Cloud Run.
+  * Host frontend demo surfaces on Firebase Hosting.
+  * Run automated end-to-end integration tests across all three core scenarios.
   * Record <3-minute high-impact demo video:
-    * 0:00–0:30 Problem statement: Merchant onboarding friction & static catalog limits.
-    * 0:30–1:45 Live demo: Upload messy PDF → instant extraction & omnichannel assets → instant shopper query.
-    * 1:45–2:30 Architecture overview: Deep modules, Gemini Flash + Embeddings, Cloud Run scalability.
-    * 2:30–3:00 Business impact & metrics.
-  * Finalize slide deck and submit on the AI Builder Cup portal.
+    * 0:00–0:25 The problem: $300B discovery loss, $890B returns, stockout dead-ends.
+    * 0:25–1:05 Live demo: Scenario 1 (Discovery & Fit-Check).
+    * 1:05–1:40 Live demo: Scenario 2 (Stockout Rescue & Trade-Offs).
+    * 1:40–2:15 Live demo: Scenario 3 (Associate Return Vision Inspection).
+    * 2:15–2:45 Merchant Dashboard: Revenue-at-risk demand insights generated live.
+    * 2:45–3:00 Architecture overview: Deep modules, Gemini Flash/Pro, Cloud Run.
+  * Finalize slide deck and submit to the AI Builder Cup portal.
 
 ---
 
 ## 3. Risk Management & Mitigations
-* **Risk: Gemini API Rate Limits during bulk parsing**
-  * *Mitigation*: Batch requests, local chunk caching, and exponential backoff.
-* **Risk: Cloud Run cold starts / deployment errors**
-  * *Mitigation*: Test container deployment on Day 5 and Day 8, well before final deadline.
-* **Risk: Scope creep on conversational voice frontend**
-  * *Mitigation*: Keep Storefront as a clean, responsive web chat/search interface consuming the deep graph module; voice can be progressive enhancement if time allows.
+* **Risk: LLM Hallucinations in Catalog Recommendations**
+  * *Mitigation*: Hard anti-hallucination constraint requiring citations of existing SKU IDs fetched from the repository.
+* **Risk: Gemini API Latency on Interactive Turns**
+  * *Mitigation*: Use Gemini 2.x/1.5 Flash with minimal system prompts for interactive shopper and associate turns; reserve Gemini Pro for asynchronous batch insight generation.
+* **Risk: Cold Starts on Cloud Run**
+  * *Mitigation*: Lightweight FastAPI runtime, minimal container image footprint, and min-instances set to 1 during judging.
